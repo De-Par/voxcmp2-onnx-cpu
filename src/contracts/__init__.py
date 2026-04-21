@@ -1,0 +1,43 @@
+"""Typed contracts for proposed VoxCPM2 ONNX module boundaries."""
+
+from .module_schemas import (
+    AUDIO_VAE_DECODER_INPUTS,
+    AUDIO_VAE_DECODER_OUTPUTS,
+    AUDIO_VAE_ENCODER_INPUTS,
+    AUDIO_VAE_ENCODER_OUTPUTS,
+    VOXCPM2_DECODE_STEP_INPUTS,
+    VOXCPM2_DECODE_STEP_OUTPUTS,
+    VOXCPM2_PREFILL_INPUTS,
+    VOXCPM2_PREFILL_OUTPUTS,
+    AudioVAEDecoderInputs,
+    AudioVAEDecoderOutputs,
+    AudioVAEEncoderInputs,
+    AudioVAEEncoderOutputs,
+    TensorSpec,
+    TransformerCacheSpec,
+    VoxCPM2DecodeStepInputs,
+    VoxCPM2DecodeStepOutputs,
+    VoxCPM2PrefillInputs,
+    VoxCPM2PrefillOutputs,
+)
+
+__all__ = [
+    "AUDIO_VAE_DECODER_INPUTS",
+    "AUDIO_VAE_DECODER_OUTPUTS",
+    "AUDIO_VAE_ENCODER_INPUTS",
+    "AUDIO_VAE_ENCODER_OUTPUTS",
+    "VOXCPM2_DECODE_STEP_INPUTS",
+    "VOXCPM2_DECODE_STEP_OUTPUTS",
+    "VOXCPM2_PREFILL_INPUTS",
+    "VOXCPM2_PREFILL_OUTPUTS",
+    "AudioVAEDecoderInputs",
+    "AudioVAEDecoderOutputs",
+    "AudioVAEEncoderInputs",
+    "AudioVAEEncoderOutputs",
+    "TensorSpec",
+    "TransformerCacheSpec",
+    "VoxCPM2DecodeStepInputs",
+    "VoxCPM2DecodeStepOutputs",
+    "VoxCPM2PrefillInputs",
+    "VoxCPM2PrefillOutputs",
+]
