@@ -227,6 +227,7 @@ Trace records are compact JSONL events with stage name, input/output shapes, dty
 - [docs/decode_state_contract.md](docs/decode_state_contract.md): explicit decode-step state and cache contract.
 - [docs/prefill_blockers.md](docs/prefill_blockers.md): prefill export boundary, mode inputs, and blockers.
 - [docs/audio_vae_encoder_onnx_report.md](docs/audio_vae_encoder_onnx_report.md): encoder blocker isolation and parity notes.
+- [docs/bf16_feasibility.md](docs/bf16_feasibility.md): experimental BF16 initializer-size analysis and rollback rules.
 - [docs/torch_dependency_audit.md](docs/torch_dependency_audit.md): runtime PyTorch dependency audit.
 - [docs/platform_support.md](docs/platform_support.md): platform matrix and verification commands.
 
