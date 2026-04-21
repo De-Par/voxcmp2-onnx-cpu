@@ -10,10 +10,10 @@ __pycache__/
 # Local virtual environments
 .venv/
 
-# Upstream checkout is managed as an optional local submodule/worktree.
+# Upstream checkout is managed as an optional local submodule/worktree
 third_party/
 
-# Generated ONNX models, external data, benchmark WAVs, JSON reports, and traces.
+# Generated ONNX models, external data, benchmark WAVs, JSON reports, and traces
 artifacts/
 traces/
 
