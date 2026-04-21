@@ -203,6 +203,32 @@ python -B src/cli/synthesize.py \
 
 For clone modes, provide `--reference-wav`, and for ultimate clone also provide `--prompt-wav` and `--prompt-text`.
 
+## Benchmark Variants
+
+Compare the official VoxCPM2 API, ONNX FP32, and experimental ONNX BF16 artifacts:
+
+```bash
+python -B src/bench/compare_pipelines.py \
+  --text "Hello from VoxCPM2." \
+  --output-dir artifacts/bench \
+  --variants orig onnx_fp32 onnx_bf16 \
+  --max-steps 1 \
+  --orig-max-len 1 \
+  --orig-min-len 0 \
+  --orig-inference-timesteps 1
+```
+
+The benchmark prints one JSON line per variant with:
+
+- `output_wav`
+- `load_seconds`
+- `synth_seconds`
+- `total_seconds`
+- `sample_rate`
+- `samples`
+
+BF16 paths default to `artifacts/bf16_experiment/*`. Production FP32 defaults are not changed.
+
 ## Trace Official Generate Path
 
 Use the trace tool before changing module boundaries:
