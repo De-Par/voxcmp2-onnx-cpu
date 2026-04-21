@@ -55,10 +55,38 @@ def test_cpu_only_runtime_smoke() -> None:
         wavfile.write(str(wav_path), sample_rate, samples)
 
         mode_inputs = [
-            pipeline.build_prefill_inputs("Hello.", mode="text_only", voice_design=None, reference_wav_path=None, prompt_wav_path=None, prompt_text=None),
-            pipeline.build_prefill_inputs("Hello.", mode="voice_design", voice_design="calm voice", reference_wav_path=None, prompt_wav_path=None, prompt_text=None),
-            pipeline.build_prefill_inputs("Hello.", mode="controllable_clone", voice_design=None, reference_wav_path=wav_path, prompt_wav_path=None, prompt_text=None),
-            pipeline.build_prefill_inputs("Hello.", mode="ultimate_clone", voice_design=None, reference_wav_path=wav_path, prompt_wav_path=wav_path, prompt_text="Prompt."),
+            pipeline.build_prefill_inputs(
+                "Hello.",
+                mode="text_only",
+                voice_design=None,
+                reference_wav_path=None,
+                prompt_wav_path=None,
+                prompt_text=None,
+            ),
+            pipeline.build_prefill_inputs(
+                "Hello.",
+                mode="voice_design",
+                voice_design="calm voice",
+                reference_wav_path=None,
+                prompt_wav_path=None,
+                prompt_text=None,
+            ),
+            pipeline.build_prefill_inputs(
+                "Hello.",
+                mode="controllable_clone",
+                voice_design=None,
+                reference_wav_path=wav_path,
+                prompt_wav_path=None,
+                prompt_text=None,
+            ),
+            pipeline.build_prefill_inputs(
+                "Hello.",
+                mode="ultimate_clone",
+                voice_design=None,
+                reference_wav_path=wav_path,
+                prompt_wav_path=wav_path,
+                prompt_text="Prompt.",
+            ),
         ]
     _assert_no_forbidden_runtime_modules()
 

@@ -362,22 +362,42 @@ def _parser() -> argparse.ArgumentParser:
         help="Official generate pathway to validate and trace.",
     )
     parser.add_argument("--text", required=True, help="Target text passed to official VoxCPM.generate().")
-    parser.add_argument("--reference-wav-path", help="Reference WAV path for controllable_clone or optional ultimate_clone reference prefix.")
+    parser.add_argument(
+        "--reference-wav-path",
+        help="Reference WAV path for controllable_clone or optional ultimate_clone reference prefix.",
+    )
     parser.add_argument("--prompt-wav-path", help="Prompt WAV path required by ultimate_clone.")
     parser.add_argument("--prompt-text", help="Prompt text required by ultimate_clone.")
-    parser.add_argument("--trace-output", type=Path, default=Path("trace_generate.jsonl"), help="JSONL trace output path.")
+    parser.add_argument(
+        "--trace-output", type=Path, default=Path("trace_generate.jsonl"), help="JSONL trace output path."
+    )
     parser.add_argument("--wav-output", type=Path, help="Optional synthesized WAV output path for manual listening.")
     parser.add_argument("--device", default="cpu", help="Device used by the official PyTorch model while tracing.")
-    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow from_pretrained to fetch missing files.")
-    parser.add_argument("--normalize", action="store_true", help="Enable official text normalization inside VoxCPM.generate().")
-    parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value for official generation.")
+    parser.add_argument(
+        "--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files."
+    )
+    parser.add_argument(
+        "--allow-download",
+        action="store_false",
+        dest="local_files_only",
+        help="Allow from_pretrained to fetch missing files.",
+    )
+    parser.add_argument(
+        "--normalize", action="store_true", help="Enable official text normalization inside VoxCPM.generate()."
+    )
+    parser.add_argument(
+        "--cfg-value", type=float, default=2.0, help="Classifier-free guidance value for official generation."
+    )
     parser.add_argument("--inference-timesteps", type=int, default=10, help="Official CFM/LocDiT solver step count.")
     parser.add_argument("--min-len", type=int, default=2, help="Minimum generated audio-feature steps before stopping.")
     parser.add_argument("--max-len", type=int, default=4096, help="Maximum generated audio-feature steps.")
     parser.add_argument("--retry-badcase", action="store_true", help="Enable official retry_badcase behavior.")
-    parser.add_argument("--retry-badcase-max-times", type=int, default=3, help="Maximum official retry_badcase attempts.")
-    parser.add_argument("--retry-badcase-ratio-threshold", type=float, default=6.0, help="Official retry_badcase ratio threshold.")
+    parser.add_argument(
+        "--retry-badcase-max-times", type=int, default=3, help="Maximum official retry_badcase attempts."
+    )
+    parser.add_argument(
+        "--retry-badcase-ratio-threshold", type=float, default=6.0, help="Official retry_badcase ratio threshold."
+    )
     return parser
 
 

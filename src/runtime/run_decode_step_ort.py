@@ -144,11 +144,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-seq", type=int, default=16, help="Synthetic valid KV-cache length entering the step.")
     parser.add_argument("--hidden-size", type=int, default=2048, help="Transformer hidden size expected by the graph.")
     parser.add_argument("--patch-size", type=int, default=4, help="Audio feature patch size expected by the graph.")
-    parser.add_argument("--feat-dim", type=int, default=64, help="Audio feature channel dimension expected by the graph.")
+    parser.add_argument(
+        "--feat-dim", type=int, default=64, help="Audio feature channel dimension expected by the graph."
+    )
     parser.add_argument("--base-layers", type=int, default=28, help="Base LM layer count represented in cache tensors.")
-    parser.add_argument("--residual-layers", type=int, default=8, help="Residual LM layer count represented in cache tensors.")
-    parser.add_argument("--kv-heads", type=int, default=2, help="Number of key/value heads represented in cache tensors.")
-    parser.add_argument("--head-dim", type=int, default=128, help="Per-head key/value dimension represented in cache tensors.")
+    parser.add_argument(
+        "--residual-layers", type=int, default=8, help="Residual LM layer count represented in cache tensors."
+    )
+    parser.add_argument(
+        "--kv-heads", type=int, default=2, help="Number of key/value heads represented in cache tensors."
+    )
+    parser.add_argument(
+        "--head-dim", type=int, default=128, help="Per-head key/value dimension represented in cache tensors."
+    )
     parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value.")
     parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for synthetic input.")
     return parser

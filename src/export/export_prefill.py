@@ -131,7 +131,7 @@ def load_voxcpm2_prefill_model(model_dir: Path) -> torch.nn.Module:
     model = model.to(device="cpu", dtype=torch.float32).eval()
     model.config.dtype = "float32"
     print(f"loaded_voxcpm2={model_dir}")
-    print(f"device=cpu dtype=float32")
+    print("device=cpu dtype=float32")
     print(f"patch_size={model.patch_size} feat_dim={model.feat_dim}")
     print(
         "lm_config="
@@ -341,22 +341,39 @@ def _parser() -> argparse.ArgumentParser:
             "--output artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts"
         ),
     )
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/prefill/voxcpm2_prefill.onnx"), help="ONNX output path.")
+    parser.add_argument(
+        "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("artifacts/prefill/voxcpm2_prefill.onnx"), help="ONNX output path."
+    )
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
-    parser.add_argument("--seq-len", type=int, default=16, help="Example full prompt sequence length used during export.")
+    parser.add_argument(
+        "--seq-len", type=int, default=16, help="Example full prompt sequence length used during export."
+    )
     parser.add_argument(
         "--mode",
         choices=["plain_tts", "voice_design", "controllable_clone", "ultimate_clone"],
         default="plain_tts",
         help="Synthetic input layout used to exercise the prefill boundary during export.",
     )
-    parser.add_argument("--reference-steps", type=int, default=3, help="Synthetic reference-audio feature steps for clone modes.")
-    parser.add_argument("--prompt-steps", type=int, default=3, help="Synthetic prompt-audio feature steps for ultimate_clone.")
+    parser.add_argument(
+        "--reference-steps", type=int, default=3, help="Synthetic reference-audio feature steps for clone modes."
+    )
+    parser.add_argument(
+        "--prompt-steps", type=int, default=3, help="Synthetic prompt-audio feature steps for ultimate_clone."
+    )
     parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic export inputs.")
     parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
-    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
+    parser.add_argument(
+        "--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files."
+    )
+    parser.add_argument(
+        "--allow-download",
+        action="store_false",
+        dest="local_files_only",
+        help="Allow snapshot_download to fetch missing files.",
+    )
     return parser
 
 

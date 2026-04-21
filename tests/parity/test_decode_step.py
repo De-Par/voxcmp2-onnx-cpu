@@ -29,7 +29,9 @@ from src.export.export_prefill import load_voxcpm2_prefill_model
 def _compare_output(name: str, torch_value: np.ndarray, ort_value: np.ndarray) -> dict[str, float | list[int] | str]:
     if torch_value.dtype.kind in {"i", "u"}:
         equal = np.array_equal(torch_value, ort_value)
-        max_abs_diff = 0.0 if equal else float(np.max(np.abs(torch_value.astype(np.int64) - ort_value.astype(np.int64))))
+        max_abs_diff = (
+            0.0 if equal else float(np.max(np.abs(torch_value.astype(np.int64) - ort_value.astype(np.int64))))
+        )
         mean_abs_diff = max_abs_diff
     else:
         abs_diff = np.abs(torch_value - ort_value)
@@ -106,15 +108,26 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_decode_step.onnx.")
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
+    parser.add_argument(
+        "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
+    )
     parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for parity input.")
     parser.add_argument("--cache-seq", type=int, default=16, help="Synthetic valid KV-cache length entering the step.")
-    parser.add_argument("--inference-timesteps", type=int, default=10, help="CFM/LocDiT solver steps embedded in the exported graph.")
+    parser.add_argument(
+        "--inference-timesteps", type=int, default=10, help="CFM/LocDiT solver steps embedded in the exported graph."
+    )
     parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value.")
     parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic parity input.")
     parser.add_argument("--atol", type=float, default=1e-3, help="Maximum allowed absolute difference per tensor.")
-    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
+    parser.add_argument(
+        "--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files."
+    )
+    parser.add_argument(
+        "--allow-download",
+        action="store_false",
+        dest="local_files_only",
+        help="Allow snapshot_download to fetch missing files.",
+    )
     return parser
 
 

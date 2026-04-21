@@ -72,7 +72,9 @@ class CharTokenizerWrapper:
     def __init__(self, tokenizer: Tokenizer) -> None:
         self.tokenizer = tokenizer
         self.multichar_tokens = {
-            token for token in tokenizer.get_vocab().keys() if len(token) >= 2 and all("\u4e00" <= c <= "\u9fff" for c in token)
+            token
+            for token in tokenizer.get_vocab().keys()
+            if len(token) >= 2 and all("\u4e00" <= c <= "\u9fff" for c in token)
         }
 
     def __call__(self, text: str) -> list[int]:
@@ -195,10 +197,14 @@ class VoxCPM2OnnxPipeline:
                 "residual_k_cache": state["residual_k_cache"],
                 "residual_v_cache": state["residual_v_cache"],
                 "residual_cache_length": state["residual_cache_length"],
-                "diffusion_noise": rng.standard_normal((1, self.config.feat_dim, self.config.patch_size), dtype=np.float32),
+                "diffusion_noise": rng.standard_normal(
+                    (1, self.config.feat_dim, self.config.patch_size), dtype=np.float32
+                ),
                 "cfg_value": np.array([cfg_value], dtype=np.float32),
             }
-            outputs = dict(zip(DECODE_OUTPUTS, self.sessions.decode_step.run(DECODE_OUTPUTS, decode_inputs), strict=True))
+            outputs = dict(
+                zip(DECODE_OUTPUTS, self.sessions.decode_step.run(DECODE_OUTPUTS, decode_inputs), strict=True)
+            )
             generated.append(outputs["pred_audio_feature"])
             if step >= min_steps and int(np.argmax(outputs["stop_logits"], axis=-1)[0]) == 1:
                 break
@@ -280,13 +286,21 @@ class VoxCPM2OnnxPipeline:
                 )
                 tokens = np.concatenate([ref_tokens, text_tokens, prompt_pad_tokens])
                 audio_features = np.concatenate([ref_feats, text_pad_feat, prompt_feat], axis=0)
-                text_mask = np.concatenate([ref_t_mask, np.ones(text_len, dtype=np.float32), np.zeros(prompt_len, dtype=np.float32)])
-                audio_mask = np.concatenate([ref_a_mask, np.zeros(text_len, dtype=np.float32), np.ones(prompt_len, dtype=np.float32)])
+                text_mask = np.concatenate(
+                    [ref_t_mask, np.ones(text_len, dtype=np.float32), np.zeros(prompt_len, dtype=np.float32)]
+                )
+                audio_mask = np.concatenate(
+                    [ref_a_mask, np.zeros(text_len, dtype=np.float32), np.ones(prompt_len, dtype=np.float32)]
+                )
             else:
                 tokens = np.concatenate([text_tokens, prompt_pad_tokens])
                 audio_features = np.concatenate([text_pad_feat, prompt_feat], axis=0)
-                text_mask = np.concatenate([np.ones(text_len, dtype=np.float32), np.zeros(prompt_len, dtype=np.float32)])
-                audio_mask = np.concatenate([np.zeros(text_len, dtype=np.float32), np.ones(prompt_len, dtype=np.float32)])
+                text_mask = np.concatenate(
+                    [np.ones(text_len, dtype=np.float32), np.zeros(prompt_len, dtype=np.float32)]
+                )
+                audio_mask = np.concatenate(
+                    [np.zeros(text_len, dtype=np.float32), np.ones(prompt_len, dtype=np.float32)]
+                )
         else:
             tokens = text_tokens
             audio_features = text_pad_feat
@@ -311,8 +325,12 @@ class VoxCPM2OnnxPipeline:
             ]
         )
         feats = np.concatenate([z1, ref_feat, z1], axis=0)
-        text_mask = np.concatenate([np.ones(1, dtype=np.float32), np.zeros(ref_len, dtype=np.float32), np.ones(1, dtype=np.float32)])
-        audio_mask = np.concatenate([np.zeros(1, dtype=np.float32), np.ones(ref_len, dtype=np.float32), np.zeros(1, dtype=np.float32)])
+        text_mask = np.concatenate(
+            [np.ones(1, dtype=np.float32), np.zeros(ref_len, dtype=np.float32), np.ones(1, dtype=np.float32)]
+        )
+        audio_mask = np.concatenate(
+            [np.zeros(1, dtype=np.float32), np.ones(ref_len, dtype=np.float32), np.zeros(1, dtype=np.float32)]
+        )
         return tokens, feats, text_mask, audio_mask
 
     def _encode_wav(self, wav_path: str | Path | None, *, padding_mode: Literal["left", "right"]) -> np.ndarray:
@@ -337,7 +355,11 @@ class VoxCPM2OnnxPipeline:
             mono = np.pad(mono, (pad, 0) if padding_mode == "left" else (0, pad))
         waveform = mono.reshape(1, 1, -1).astype(np.float32, copy=False)
         latent = self.sessions.audio_encoder.run(["latent"], {"waveform": waveform})[0][0]
-        return latent.reshape(self.config.feat_dim, -1, self.config.patch_size).transpose(1, 2, 0).astype(np.float32, copy=False)
+        return (
+            latent.reshape(self.config.feat_dim, -1, self.config.patch_size)
+            .transpose(1, 2, 0)
+            .astype(np.float32, copy=False)
+        )
 
     @staticmethod
     def _to_float32_mono(audio: np.ndarray) -> np.ndarray:

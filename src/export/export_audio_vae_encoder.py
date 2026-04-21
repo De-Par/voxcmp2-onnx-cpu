@@ -113,13 +113,32 @@ def _parser() -> argparse.ArgumentParser:
             "--output artifacts/audio_vae_encoder/audio_vae_encoder.onnx --samples 20480"
         ),
     )
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/audio_vae_encoder/audio_vae_encoder.onnx"), help="ONNX output path.")
+    parser.add_argument(
+        "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("artifacts/audio_vae_encoder/audio_vae_encoder.onnx"),
+        help="ONNX output path.",
+    )
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
-    parser.add_argument("--samples", type=int, default=20480, help="Example padded input samples; must be a multiple of audio_vae.chunk_size.")
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=20480,
+        help="Example padded input samples; must be a multiple of audio_vae.chunk_size.",
+    )
     parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
-    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
+    parser.add_argument(
+        "--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files."
+    )
+    parser.add_argument(
+        "--allow-download",
+        action="store_false",
+        dest="local_files_only",
+        help="Allow snapshot_download to fetch missing files.",
+    )
     return parser
 
 

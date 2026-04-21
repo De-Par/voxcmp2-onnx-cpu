@@ -390,12 +390,21 @@ def _shape_report(model: torch.nn.Module, batch_size: int, cache_seq: int, infer
             "cfg_value": {"dtype": "float32", "dims": ["static:1"]},
         },
         "outputs": {
-            "pred_audio_feature": [f"static:{batch_size}", "static:1", f"static:{dims['patch_size']}", f"static:{dims['feat_dim']}"],
+            "pred_audio_feature": [
+                f"static:{batch_size}",
+                "static:1",
+                f"static:{dims['patch_size']}",
+                f"static:{dims['feat_dim']}",
+            ],
             "decoder_latent": [f"static:{batch_size}", f"static:{dims['feat_dim']}", f"static:{dims['patch_size']}"],
             "stop_logits": [f"static:{batch_size}", "static:2"],
             "next_lm_hidden": [f"static:{batch_size}", f"static:{dims['hidden_size']}"],
             "next_residual_hidden": [f"static:{batch_size}", f"static:{dims['hidden_size']}"],
-            "next_prefix_feat_cond": [f"static:{batch_size}", f"static:{dims['patch_size']}", f"static:{dims['feat_dim']}"],
+            "next_prefix_feat_cond": [
+                f"static:{batch_size}",
+                f"static:{dims['patch_size']}",
+                f"static:{dims['feat_dim']}",
+            ],
             "next_base_k_cache": [
                 f"static:{dims['base_layers']}",
                 f"static:{batch_size}",
@@ -449,7 +458,10 @@ def export_decode_step(args: argparse.Namespace) -> None:
 
     print("input_names=" + ",".join(INPUT_NAMES))
     print("output_names=" + ",".join(OUTPUT_NAMES))
-    print("shape_report=" + json.dumps(_shape_report(model, args.batch_size, args.cache_seq, args.inference_timesteps), sort_keys=True))
+    print(
+        "shape_report="
+        + json.dumps(_shape_report(model, args.batch_size, args.cache_seq, args.inference_timesteps), sort_keys=True)
+    )
     print(f"output_path={output_path}")
 
     with torch.inference_mode():
@@ -480,16 +492,34 @@ def _parser() -> argparse.ArgumentParser:
             "--output artifacts/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
         ),
     )
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/decode_step/voxcpm2_decode_step.onnx"), help="ONNX output path.")
+    parser.add_argument(
+        "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("artifacts/decode_step/voxcpm2_decode_step.onnx"), help="ONNX output path."
+    )
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
-    parser.add_argument("--cache-seq", type=int, default=16, help="Example valid KV-cache length entering the decode step.")
-    parser.add_argument("--inference-timesteps", type=int, default=10, help="Fixed CFM/LocDiT solver steps embedded in this one-step graph.")
+    parser.add_argument(
+        "--cache-seq", type=int, default=16, help="Example valid KV-cache length entering the decode step."
+    )
+    parser.add_argument(
+        "--inference-timesteps",
+        type=int,
+        default=10,
+        help="Fixed CFM/LocDiT solver steps embedded in this one-step graph.",
+    )
     parser.add_argument("--cfg-value", type=float, default=2.0, help="Example classifier-free guidance value.")
     parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic export inputs.")
     parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
-    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
+    parser.add_argument(
+        "--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files."
+    )
+    parser.add_argument(
+        "--allow-download",
+        action="store_false",
+        dest="local_files_only",
+        help="Allow snapshot_download to fetch missing files.",
+    )
     return parser
 
 

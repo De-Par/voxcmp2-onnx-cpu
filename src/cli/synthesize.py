@@ -34,20 +34,36 @@ def _parser() -> argparse.ArgumentParser:
         help="Runtime orchestration mode. Reference and prompt arguments are validated by the pipeline.",
     )
     parser.add_argument("--voice-design", help="Optional style/control text prepended for voice_design mode.")
-    parser.add_argument("--reference-wav", type=Path, help="Reference WAV path for controllable_clone or ultimate_clone.")
+    parser.add_argument(
+        "--reference-wav", type=Path, help="Reference WAV path for controllable_clone or ultimate_clone."
+    )
     parser.add_argument("--prompt-wav", type=Path, help="Prompt/continuation WAV path for ultimate_clone.")
     parser.add_argument("--prompt-text", help="Prompt/continuation text paired with --prompt-wav for ultimate_clone.")
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
-    parser.add_argument("--audio-encoder-onnx", type=Path, default=defaults.audio_encoder, help="AudioVAEEncoder ONNX file.")
-    parser.add_argument("--audio-decoder-onnx", type=Path, default=defaults.audio_decoder, help="AudioVAEDecoder ONNX file.")
+    parser.add_argument(
+        "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
+    )
+    parser.add_argument(
+        "--audio-encoder-onnx", type=Path, default=defaults.audio_encoder, help="AudioVAEEncoder ONNX file."
+    )
+    parser.add_argument(
+        "--audio-decoder-onnx", type=Path, default=defaults.audio_decoder, help="AudioVAEDecoder ONNX file."
+    )
     parser.add_argument("--prefill-onnx", type=Path, default=defaults.prefill, help="VoxCPM2Prefill ONNX file.")
-    parser.add_argument("--decode-step-onnx", type=Path, default=defaults.decode_step, help="VoxCPM2DecodeStep ONNX file.")
+    parser.add_argument(
+        "--decode-step-onnx", type=Path, default=defaults.decode_step, help="VoxCPM2DecodeStep ONNX file."
+    )
     parser.add_argument("--max-steps", type=int, default=1, help="Maximum host decode-loop iterations.")
-    parser.add_argument("--min-steps", type=int, default=0, help="Minimum decode steps before stop logits may end synthesis.")
-    parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value passed to decode_step.")
+    parser.add_argument(
+        "--min-steps", type=int, default=0, help="Minimum decode steps before stop logits may end synthesis."
+    )
+    parser.add_argument(
+        "--cfg-value", type=float, default=2.0, help="Classifier-free guidance value passed to decode_step."
+    )
     parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for host-supplied diffusion noise.")
     parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local model files.")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow Hugging Face downloads.")
+    parser.add_argument(
+        "--allow-download", action="store_false", dest="local_files_only", help="Allow Hugging Face downloads."
+    )
     return parser
 
 

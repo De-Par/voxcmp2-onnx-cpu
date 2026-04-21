@@ -28,7 +28,9 @@ from src.export.export_audio_vae_decoder import _resolve_model_path
 def _compare_output(name: str, torch_value: np.ndarray, ort_value: np.ndarray) -> dict[str, float | list[int] | str]:
     if torch_value.dtype.kind in {"i", "u"}:
         equal = np.array_equal(torch_value, ort_value)
-        max_abs_diff = 0.0 if equal else float(np.max(np.abs(torch_value.astype(np.int64) - ort_value.astype(np.int64))))
+        max_abs_diff = (
+            0.0 if equal else float(np.max(np.abs(torch_value.astype(np.int64) - ort_value.astype(np.int64))))
+        )
         mean_abs_diff = max_abs_diff
     else:
         abs_diff = np.abs(torch_value - ort_value)
@@ -108,7 +110,9 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_prefill.onnx.")
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
+    parser.add_argument(
+        "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
+    )
     parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for parity input.")
     parser.add_argument("--seq-len", type=int, default=16, help="Synthetic token/audio sequence length.")
     parser.add_argument(
@@ -117,12 +121,23 @@ def _parser() -> argparse.ArgumentParser:
         default="plain_tts",
         help="Synthetic pathway layout used to exercise prefill masks.",
     )
-    parser.add_argument("--reference-steps", type=int, default=3, help="Synthetic reference-audio feature steps for clone modes.")
-    parser.add_argument("--prompt-steps", type=int, default=3, help="Synthetic prompt-audio feature steps for ultimate_clone.")
+    parser.add_argument(
+        "--reference-steps", type=int, default=3, help="Synthetic reference-audio feature steps for clone modes."
+    )
+    parser.add_argument(
+        "--prompt-steps", type=int, default=3, help="Synthetic prompt-audio feature steps for ultimate_clone."
+    )
     parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic parity input.")
     parser.add_argument("--atol", type=float, default=1e-3, help="Maximum allowed absolute difference per tensor.")
-    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
+    parser.add_argument(
+        "--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files."
+    )
+    parser.add_argument(
+        "--allow-download",
+        action="store_false",
+        dest="local_files_only",
+        help="Allow snapshot_download to fetch missing files.",
+    )
     return parser
 
 
