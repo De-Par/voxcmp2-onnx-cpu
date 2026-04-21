@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=70,<81", "wheel>=0.43,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voxcpm2-onnx-cpu"
+version = "0.1.0"
+description = "CPU-only ONNX Runtime export and runtime scaffolding for VoxCPM2"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = "Apache-2.0"
+authors = [{ name = "voxcpm2-onnx-cpu contributors" }]
+keywords = ["voxcpm2", "onnx", "onnxruntime", "tts", "cpu"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "huggingface-hub>=1.0,<2",
+    "numpy>=2.0,<3",
+    "onnx>=1.20,<1.22",
+    "onnxruntime>=1.24,<1.25",
+    "scipy>=1.16,<1.18",
+    "tokenizers>=0.22,<0.23",
+]
+
+[project.optional-dependencies]
+export = [
+    "einops>=0.8,<1",
+    "librosa>=0.11,<0.12",
+    "onnxscript>=0.6,<0.8",
+    "pydantic>=2,<3",
+    "safetensors>=0.6,<0.8",
+    "simplejson>=3.19,<4",
+    "sortedcontainers>=2.4,<3",
+    "soundfile>=0.13,<0.14",
+    "torch>=2.5,<2.12",
+    "torchaudio>=2.5,<2.12",
+    "torchcodec>=0.6,<0.9",
+    "tqdm>=4.66,<5",
+    "transformers>=4.36,<6",
+]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.8,<1",
+]
+
+[project.scripts]
+voxcpm2-synthesize = "src.cli.synthesize:main"
+voxcpm2-trace-generate = "src.parity.trace_generate:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+"src/cli/synthesize.py" = ["E402"]
+"src/export/export_audio_vae_encoder.py" = ["E402"]
+"src/export/export_decode_step.py" = ["E402"]
+"src/export/export_prefill.py" = ["E402"]
+"tests/parity/test_audio_vae_decoder.py" = ["E402"]
+"tests/parity/test_audio_vae_encoder.py" = ["E402"]
+"tests/parity/test_decode_step.py" = ["E402"]
+"tests/parity/test_prefill.py" = ["E402"]
+"tests/smoke/test_cpu_only_runtime.py" = ["E402"]
