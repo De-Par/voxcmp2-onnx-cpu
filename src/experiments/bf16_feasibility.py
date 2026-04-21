@@ -404,7 +404,9 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("artifacts/bf16_experiment"),
         help="Directory for converted experimental ONNX artifacts.",
     )
-    parser.add_argument("--report-json", type=Path, help="JSON report output path. Defaults to artifacts/bf16_feasibility.")
+    parser.add_argument(
+        "--report-json", type=Path, help="JSON report output path. Defaults to artifacts/bf16_feasibility."
+    )
     parser.add_argument(
         "--min-tensor-bytes",
         type=int,
