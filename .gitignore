@@ -1,3 +1,5 @@
 .DS_Store
 .venv
-third_party
+third_party/
+artifacts/
+traces/
