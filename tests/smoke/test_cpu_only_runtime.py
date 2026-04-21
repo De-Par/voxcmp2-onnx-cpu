@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
+from scipy.io import wavfile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -17,14 +17,20 @@ from src.runtime.pipeline import VoxCPM2OnnxPipeline
 from src.runtime.session_factory import CPU_PROVIDER
 
 TORCH_MODULE_NAME = "to" + "rch"
+FORBIDDEN_RUNTIME_MODULES = (TORCH_MODULE_NAME, "sound" + "file", "lib" + "rosa")
+
+
+def _assert_no_forbidden_runtime_modules() -> None:
+    for module_name in FORBIDDEN_RUNTIME_MODULES:
+        assert module_name not in sys.modules
 
 
 def test_cpu_only_runtime_smoke() -> None:
-    assert TORCH_MODULE_NAME not in sys.modules
+    _assert_no_forbidden_runtime_modules()
 
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts()
     paths = pipeline.validate()
-    assert TORCH_MODULE_NAME not in sys.modules
+    _assert_no_forbidden_runtime_modules()
 
     assert set(paths) == {"audio_encoder", "audio_decoder", "prefill", "decode_step"}
     assert pipeline.sessions.created_session_names == ()
@@ -40,13 +46,13 @@ def test_cpu_only_runtime_smoke() -> None:
     assert waveform.ndim == 1
     assert waveform.size > 0
     assert np.isfinite(waveform).all()
-    assert TORCH_MODULE_NAME not in sys.modules
+    _assert_no_forbidden_runtime_modules()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         wav_path = Path(tmpdir) / "prompt.wav"
         sample_rate = pipeline.config.encode_sample_rate
         samples = np.zeros(sample_rate // 5, dtype=np.float32)
-        sf.write(str(wav_path), samples, sample_rate)
+        wavfile.write(str(wav_path), sample_rate, samples)
 
         mode_inputs = [
             pipeline.build_prefill_inputs("Hello.", mode="text_only", voice_design=None, reference_wav_path=None, prompt_wav_path=None, prompt_text=None),
@@ -54,7 +60,7 @@ def test_cpu_only_runtime_smoke() -> None:
             pipeline.build_prefill_inputs("Hello.", mode="controllable_clone", voice_design=None, reference_wav_path=wav_path, prompt_wav_path=None, prompt_text=None),
             pipeline.build_prefill_inputs("Hello.", mode="ultimate_clone", voice_design=None, reference_wav_path=wav_path, prompt_wav_path=wav_path, prompt_text="Prompt."),
         ]
-    assert TORCH_MODULE_NAME not in sys.modules
+    _assert_no_forbidden_runtime_modules()
 
     for inputs in mode_inputs:
         assert set(inputs) == {"text_tokens", "text_mask", "audio_features", "audio_mask"}

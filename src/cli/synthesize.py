@@ -8,8 +8,6 @@ import json
 import sys
 from pathlib import Path
 
-import soundfile as sf
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -66,8 +64,7 @@ def main() -> int:
         cfg_value=args.cfg_value,
         seed=args.seed,
     )
-    args.output.expanduser().parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(args.output.expanduser()), waveform, pipeline.config.decode_sample_rate)
+    pipeline.write_wav(args.output, waveform)
     print(
         json.dumps(
             {

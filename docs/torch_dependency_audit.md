@@ -66,7 +66,7 @@ Docs mention `torch.onnx.export`, `torch.randn`, and `torch.cat` when describing
 ### Must Remain Outside ONNX
 
 - Text normalization and tokenization: host code responsibility. Runtime implementation is Python/tokenizers, not PyTorch.
-- WAV I/O and resampling: host code responsibility via `soundfile`/`librosa`, not PyTorch.
+- WAV I/O and resampling: host code responsibility via `scipy.io.wavfile` and `scipy.signal.resample_poly`, not PyTorch.
 - Orchestration loop: host code responsibility via NumPy arrays and ONNX Runtime sessions.
 - Random diffusion noise: host code responsibility via NumPy RNG.
 

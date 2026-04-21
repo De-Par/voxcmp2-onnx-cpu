@@ -9,6 +9,7 @@ Runtime target: ONNX Runtime CPU only for VoxCPM2 on:
 - Windows x86_64 / arm64
 
 The runtime consumes the export manifest and separate ONNX neural-module files. It does not assume one combined model.
+Platform implementation status is tracked in `docs/platform_support.md`.
 
 ## Host Code Responsibilities
 

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-import librosa
 import numpy as np
-import soundfile as sf
 from huggingface_hub import snapshot_download
+from scipy.io import wavfile
+from scipy.signal import resample_poly
 from tokenizers import Tokenizer
 
 from src.runtime.session_factory import OnnxModelPaths, OrtSessionFactory
@@ -205,6 +206,13 @@ class VoxCPM2OnnxPipeline:
         waveform = self.sessions.audio_decoder.run(["waveform"], {"latent": decoder_latent, "sr_cond": sr_cond})[0]
         return waveform[0, 0].astype(np.float32, copy=False)
 
+    def write_wav(self, path: str | Path, waveform: np.ndarray) -> None:
+        target = Path(path).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        clipped = np.clip(waveform, -1.0, 1.0)
+        pcm16 = (clipped * np.iinfo(np.int16).max).astype(np.int16)
+        wavfile.write(str(target), self.config.decode_sample_rate, pcm16)
+
     def build_prefill_inputs(
         self,
         text: str,
@@ -288,10 +296,15 @@ class VoxCPM2OnnxPipeline:
     def _encode_wav(self, wav_path: str | Path | None, *, padding_mode: Literal["left", "right"]) -> np.ndarray:
         if wav_path is None:
             raise ValueError("wav_path is required")
-        audio, sample_rate = sf.read(str(wav_path), always_2d=True, dtype="float32")
-        mono = audio.mean(axis=1)
+        sample_rate, audio = wavfile.read(str(wav_path))
+        mono = self._to_float32_mono(audio)
         if sample_rate != self.config.encode_sample_rate:
-            mono = librosa.resample(mono, orig_sr=sample_rate, target_sr=self.config.encode_sample_rate).astype(np.float32)
+            gcd = math.gcd(int(sample_rate), int(self.config.encode_sample_rate))
+            mono = resample_poly(
+                mono,
+                up=self.config.encode_sample_rate // gcd,
+                down=sample_rate // gcd,
+            ).astype(np.float32)
         patch_len = self.config.patch_size * self.config.audio_chunk_size
         remainder = mono.shape[0] % patch_len
         if remainder:
@@ -300,6 +313,19 @@ class VoxCPM2OnnxPipeline:
         waveform = mono.reshape(1, 1, -1).astype(np.float32, copy=False)
         latent = self.sessions.audio_encoder.run(["latent"], {"waveform": waveform})[0][0]
         return latent.reshape(self.config.feat_dim, -1, self.config.patch_size).transpose(1, 2, 0).astype(np.float32, copy=False)
+
+    @staticmethod
+    def _to_float32_mono(audio: np.ndarray) -> np.ndarray:
+        array = np.asarray(audio)
+        if array.ndim == 2:
+            array = array.mean(axis=1)
+        if np.issubdtype(array.dtype, np.floating):
+            return array.astype(np.float32, copy=False)
+        if array.dtype == np.uint8:
+            return ((array.astype(np.float32) - 128.0) / 128.0).astype(np.float32, copy=False)
+        info = np.iinfo(array.dtype)
+        scale = max(abs(info.min), abs(info.max))
+        return (array.astype(np.float32) / float(scale)).astype(np.float32, copy=False)
 
     def _load_model_config(self) -> None:
         config_path = self.model_dir / "config.json"
