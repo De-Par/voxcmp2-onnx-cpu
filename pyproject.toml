@@ -51,6 +51,7 @@ dev = [
 ]
 
 [project.scripts]
+voxcpm2-bf16-feasibility = "src.experiments.bf16_feasibility:main"
 voxcpm2-synthesize = "src.cli.synthesize:main"
 voxcpm2-trace-generate = "src.parity.trace_generate:main"
 
