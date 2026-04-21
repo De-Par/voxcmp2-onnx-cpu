@@ -16,10 +16,16 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.runtime.pipeline import VoxCPM2OnnxPipeline
 from src.runtime.session_factory import CPU_PROVIDER
 
+TORCH_MODULE_NAME = "to" + "rch"
+
 
 def test_cpu_only_runtime_smoke() -> None:
+    assert TORCH_MODULE_NAME not in sys.modules
+
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts()
     paths = pipeline.validate()
+    assert TORCH_MODULE_NAME not in sys.modules
+
     assert set(paths) == {"audio_encoder", "audio_decoder", "prefill", "decode_step"}
     assert pipeline.sessions.created_session_names == ()
 
@@ -34,6 +40,7 @@ def test_cpu_only_runtime_smoke() -> None:
     assert waveform.ndim == 1
     assert waveform.size > 0
     assert np.isfinite(waveform).all()
+    assert TORCH_MODULE_NAME not in sys.modules
 
     with tempfile.TemporaryDirectory() as tmpdir:
         wav_path = Path(tmpdir) / "prompt.wav"
@@ -47,6 +54,8 @@ def test_cpu_only_runtime_smoke() -> None:
             pipeline.build_prefill_inputs("Hello.", mode="controllable_clone", voice_design=None, reference_wav_path=wav_path, prompt_wav_path=None, prompt_text=None),
             pipeline.build_prefill_inputs("Hello.", mode="ultimate_clone", voice_design=None, reference_wav_path=wav_path, prompt_wav_path=wav_path, prompt_text="Prompt."),
         ]
+    assert TORCH_MODULE_NAME not in sys.modules
+
     for inputs in mode_inputs:
         assert set(inputs) == {"text_tokens", "text_mask", "audio_features", "audio_mask"}
         seq = inputs["text_tokens"].shape[1]

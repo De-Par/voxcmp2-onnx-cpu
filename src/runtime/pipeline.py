@@ -11,7 +11,7 @@ import librosa
 import numpy as np
 import soundfile as sf
 from huggingface_hub import snapshot_download
-from transformers import LlamaTokenizerFast, PreTrainedTokenizer
+from tokenizers import Tokenizer
 
 from src.runtime.session_factory import OnnxModelPaths, OrtSessionFactory
 
@@ -60,21 +60,26 @@ DECODE_OUTPUTS = [
 
 
 class CharTokenizerWrapper:
-    def __init__(self, tokenizer: PreTrainedTokenizer) -> None:
+    def __init__(self, tokenizer: Tokenizer) -> None:
         self.tokenizer = tokenizer
         self.multichar_tokens = {
-            token for token in tokenizer.vocab.keys() if len(token) >= 2 and all("\u4e00" <= c <= "\u9fff" for c in token)
+            token for token in tokenizer.get_vocab().keys() if len(token) >= 2 and all("\u4e00" <= c <= "\u9fff" for c in token)
         }
 
     def __call__(self, text: str) -> list[int]:
-        tokens = []
-        for token in self.tokenizer.tokenize(text):
+        ids = []
+        encoded = self.tokenizer.encode(text, add_special_tokens=False)
+        for token, token_id in zip(encoded.tokens, encoded.ids, strict=True):
             clean_token = token.replace("▁", "")
             if clean_token in self.multichar_tokens:
-                tokens.extend(clean_token)
+                for char in clean_token:
+                    char_id = self.tokenizer.token_to_id(char)
+                    if char_id is None:
+                        raise ValueError(f"Tokenizer has no id for split Chinese character: {char!r}")
+                    ids.append(char_id)
             else:
-                tokens.append(token)
-        return self.tokenizer.convert_tokens_to_ids(tokens)
+                ids.append(token_id)
+        return ids
 
 
 @dataclass(frozen=True)
@@ -126,7 +131,7 @@ class VoxCPM2OnnxPipeline:
     @property
     def tokenizer(self) -> CharTokenizerWrapper:
         if self._tokenizer is None:
-            self._tokenizer = CharTokenizerWrapper(LlamaTokenizerFast.from_pretrained(str(self.model_dir)))
+            self._tokenizer = CharTokenizerWrapper(Tokenizer.from_file(str(self.model_dir / "tokenizer.json")))
         return self._tokenizer
 
     def validate(self) -> dict[str, Path]:
