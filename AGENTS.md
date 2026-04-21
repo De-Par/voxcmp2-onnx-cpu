@@ -1,7 +1,7 @@
 # AGENTS.md
 
 - Target: full VoxCPM2 -> ONNX Runtime CPU-only
-- Platforms: macOS arm64, Linux x86_64, Windows x86_64
+- Platforms: macOS arm64, Linux x86_64 / arm64, Windows x86_64 / arm64
 - Do not simplify the model unless explicitly documented
 - Do not remove multilingual path
 - Do not remove reference-audio path
