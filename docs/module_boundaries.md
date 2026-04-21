@@ -85,7 +85,6 @@ Input:
 - residual LM KV cache tensors and `residual_cache_length`
 - `diffusion_noise`: `float32[B, 64, 4]`
 - `cfg_value`: `float32[1]`
-- `num_diffusion_steps`: `int64[1]`
 
 Output:
 
@@ -99,6 +98,8 @@ Output:
 - updated residual LM KV cache tensors and `residual_cache_length + 1`
 
 `diffusion_noise` is an explicit input so ONNX inference is deterministic and comparable. This replaces the in-graph `torch.randn` call with host-supplied noise while preserving the diffusion math.
+
+`inference_timesteps` is fixed at export time for a given decode-step ONNX artifact. This does not put the outer autoregressive loop into ONNX; host code still calls the one-step graph repeatedly.
 
 ### AudioVAEDecoder
 

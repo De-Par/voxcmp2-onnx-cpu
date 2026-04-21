@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Parity check for one VoxCPM2 decode step: PyTorch vs ONNX Runtime."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import onnxruntime as ort
+import torch
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from src.export.export_audio_vae_decoder import _resolve_model_path
+from src.export.export_decode_step import (
+    INPUT_NAMES,
+    OUTPUT_NAMES,
+    VoxCPM2DecodeStepWrapper,
+    _model_dims,
+    make_synthetic_decode_step_inputs,
+)
+from src.export.export_prefill import load_voxcpm2_prefill_model
+
+
+def _compare_output(name: str, torch_value: np.ndarray, ort_value: np.ndarray) -> dict[str, float | list[int] | str]:
+    if torch_value.dtype.kind in {"i", "u"}:
+        equal = np.array_equal(torch_value, ort_value)
+        max_abs_diff = 0.0 if equal else float(np.max(np.abs(torch_value.astype(np.int64) - ort_value.astype(np.int64))))
+        mean_abs_diff = max_abs_diff
+    else:
+        abs_diff = np.abs(torch_value - ort_value)
+        max_abs_diff = float(abs_diff.max()) if abs_diff.size else 0.0
+        mean_abs_diff = float(abs_diff.mean()) if abs_diff.size else 0.0
+    return {
+        "name": name,
+        "torch_shape": list(torch_value.shape),
+        "ort_shape": list(ort_value.shape),
+        "torch_dtype": str(torch_value.dtype),
+        "ort_dtype": str(ort_value.dtype),
+        "max_abs_diff": max_abs_diff,
+        "mean_abs_diff": mean_abs_diff,
+    }
+
+
+def compare_decode_step(args: argparse.Namespace) -> dict[str, object]:
+    model_dir = _resolve_model_path(args.model_path, args.local_files_only)
+    model = load_voxcpm2_prefill_model(model_dir)
+    wrapper = VoxCPM2DecodeStepWrapper(model, inference_timesteps=args.inference_timesteps).eval()
+    inputs = make_synthetic_decode_step_inputs(
+        batch_size=args.batch_size,
+        cache_seq=args.cache_seq,
+        cfg_value=args.cfg_value,
+        seed=args.seed,
+        **_model_dims(model),
+    )
+
+    with torch.inference_mode():
+        torch_outputs = wrapper(*(inputs[name] for name in INPUT_NAMES))
+    torch_outputs_np = [value.detach().cpu().numpy() for value in torch_outputs]
+
+    session_options = ort.SessionOptions()
+    session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    session = ort.InferenceSession(
+        str(args.onnx_path),
+        sess_options=session_options,
+        providers=["CPUExecutionProvider"],
+    )
+    ort_inputs = {name: inputs[name].detach().cpu().numpy() for name in INPUT_NAMES}
+    ort_outputs = session.run(OUTPUT_NAMES, ort_inputs)
+
+    per_output = [
+        _compare_output(name, torch_value, ort_value)
+        for name, torch_value, ort_value in zip(OUTPUT_NAMES, torch_outputs_np, ort_outputs, strict=True)
+    ]
+    failures = [item for item in per_output if item["max_abs_diff"] > args.atol]
+    result = {
+        "atol": args.atol,
+        "cache_seq": args.cache_seq,
+        "inference_timesteps": args.inference_timesteps,
+        "max_abs_diff": max(item["max_abs_diff"] for item in per_output),
+        "outputs": per_output,
+    }
+    if failures:
+        raise AssertionError(json.dumps({"failures": failures, "result": result}, sort_keys=True))
+    return result
+
+
+def test_decode_step_parity() -> None:
+    import os
+    import pytest
+
+    onnx_path = os.environ.get("VOXCPM2_DECODE_STEP_ONNX")
+    if not onnx_path:
+        pytest.skip("set VOXCPM2_DECODE_STEP_ONNX to run decode-step parity")
+    args = _parser().parse_args(["--onnx-path", onnx_path])
+    compare_decode_step(args)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Compare VoxCPM2 decode-step PyTorch and ONNX Runtime outputs.")
+    parser.add_argument("--onnx-path", type=Path, required=True)
+    parser.add_argument("--model-path", default="openbmb/VoxCPM2")
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--cache-seq", type=int, default=16)
+    parser.add_argument("--inference-timesteps", type=int, default=10)
+    parser.add_argument("--cfg-value", type=float, default=2.0)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--atol", type=float, default=1e-3)
+    parser.add_argument("--local-files-only", action="store_true", default=True)
+    parser.add_argument("--allow-download", action="store_false", dest="local_files_only")
+    return parser
+
+
+def main() -> int:
+    result = compare_decode_step(_parser().parse_args())
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

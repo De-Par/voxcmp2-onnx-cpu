@@ -68,18 +68,17 @@ class VoxCPM2DecodeStepInputs(TypedDict):
     residual_cache: TransformerCacheSpec
     diffusion_noise: TensorSpec
     cfg_value: TensorSpec
-    num_diffusion_steps: TensorSpec
 
 
 class VoxCPM2DecodeStepOutputs(TypedDict):
     pred_audio_feature: TensorSpec
     decoder_latent: TensorSpec
     stop_logits: TensorSpec
-    lm_hidden: TensorSpec
-    residual_hidden: TensorSpec
-    prefix_feat_cond: TensorSpec
-    base_cache: TransformerCacheSpec
-    residual_cache: TransformerCacheSpec
+    next_lm_hidden: TensorSpec
+    next_residual_hidden: TensorSpec
+    next_prefix_feat_cond: TensorSpec
+    next_base_cache: TransformerCacheSpec
+    next_residual_cache: TransformerCacheSpec
 
 
 def _cache(prefix: str, layers: str) -> TransformerCacheSpec:
@@ -215,12 +214,6 @@ VOXCPM2_DECODE_STEP_INPUTS: VoxCPM2DecodeStepInputs = {
         shape=("1",),
         description="Classifier-free guidance value used by LocDiT/CFM sampling.",
     ),
-    "num_diffusion_steps": TensorSpec(
-        name="num_diffusion_steps",
-        dtype="int64",
-        shape=("1",),
-        description="Number of internal CFM solver steps; export may freeze this for a fixed session variant.",
-    ),
 }
 
 VOXCPM2_DECODE_STEP_OUTPUTS: VoxCPM2DecodeStepOutputs = {
@@ -242,24 +235,24 @@ VOXCPM2_DECODE_STEP_OUTPUTS: VoxCPM2DecodeStepOutputs = {
         shape=("batch", "2"),
         description="Stop predictor logits; host applies argmax and min-length policy.",
     ),
-    "lm_hidden": TensorSpec(
-        name="lm_hidden",
+    "next_lm_hidden": TensorSpec(
+        name="next_lm_hidden",
         dtype="float32",
         shape=("batch", "hidden_2048"),
         description="Updated base LM hidden state for the next decode step.",
     ),
-    "residual_hidden": TensorSpec(
-        name="residual_hidden",
+    "next_residual_hidden": TensorSpec(
+        name="next_residual_hidden",
         dtype="float32",
         shape=("batch", "hidden_2048"),
         description="Updated residual LM hidden state for the next decode step.",
     ),
-    "prefix_feat_cond": TensorSpec(
-        name="prefix_feat_cond",
+    "next_prefix_feat_cond": TensorSpec(
+        name="next_prefix_feat_cond",
         dtype="float32",
         shape=("batch", "patch_size_4", "latent_dim_64"),
         description="Generated patch reused as the next diffusion condition.",
     ),
-    "base_cache": _cache("base", "base_layers_28"),
-    "residual_cache": _cache("residual", "residual_layers_8"),
+    "next_base_cache": _cache("next_base", "base_layers_28"),
+    "next_residual_cache": _cache("next_residual", "residual_layers_8"),
 }
