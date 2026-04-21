@@ -4,6 +4,8 @@
 
 Runtime target: VoxCPM2 ONNX Runtime CPU only.
 
+This page records code-level platform support and the checks required before claiming a release on each target platform class.
+
 | Platform | Architecture | Status |
 | --- | --- | --- |
 | macOS | arm64 | Supported and locally smoke-tested. |

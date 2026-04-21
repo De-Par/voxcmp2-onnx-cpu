@@ -11,6 +11,8 @@
 5. residual MiniCPM full-prefix pass.
 6. tensorized K/V caches for the next decode step.
 
+This page records what is inside the prefill ONNX graph, what stays in host code, and which upstream operations were intentionally isolated instead of rewritten.
+
 The wrapper does not call `StaticKVCache.fill_caches()` and does not enter the autoregressive loop. It returns cache tensors explicitly:
 
 - `base_k_cache`, `base_v_cache`: `float32[base_layers, batch, kv_heads, seq, head_dim]`
@@ -61,3 +63,10 @@ Text normalization, tokenizer behavior, language handling, WAV loading/resamplin
 - No hardcoded language.
 - No removal of reference or multilingual paths.
 - No graph optimization, quantization, or math rewrite in the first export path.
+
+## Verification
+
+```bash
+python -B src/runtime/run_prefill_ort.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B tests/parity/test_prefill.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx
+```

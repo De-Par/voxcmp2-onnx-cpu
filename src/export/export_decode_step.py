@@ -139,6 +139,8 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         hidden_states = inputs_embeds
         next_k_layers = []
         next_v_layers = []
+        # Reimplement only the official single-step transformer path needed to
+        # replace Python-side mutable cache with tensor-in/tensor-out state.
         for layer_idx, decoder_layer in enumerate(lm.layers):
             residual = hidden_states
             hidden_states = decoder_layer.input_layernorm(hidden_states)
@@ -187,6 +189,9 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         cfg_value: torch.Tensor,
     ) -> tuple[torch.Tensor, ...]:
         model = self.model
+        # All neural math remains in FP32 for the first CPU-only correctness
+        # target. Host code supplies diffusion_noise so the ONNX graph is
+        # deterministic and parity-testable.
         lm_hidden = lm_hidden.to(dtype=torch.float32)
         residual_hidden = residual_hidden.to(dtype=torch.float32)
         prefix_feat_cond = prefix_feat_cond.to(dtype=torch.float32)
@@ -467,17 +472,24 @@ def export_decode_step(args: argparse.Namespace) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Export one VoxCPM2 decode step ONNX.")
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/decode_step/voxcpm2_decode_step.onnx"))
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--cache-seq", type=int, default=16)
-    parser.add_argument("--inference-timesteps", type=int, default=10)
-    parser.add_argument("--cfg-value", type=float, default=2.0)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--opset", type=int, default=18)
-    parser.add_argument("--local-files-only", action="store_true", default=True)
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only")
+    parser = argparse.ArgumentParser(
+        description="Export one VoxCPM2 autoregressive decode step to ONNX.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Example: python -B src/export/export_decode_step.py "
+            "--output artifacts/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
+        ),
+    )
+    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
+    parser.add_argument("--output", type=Path, default=Path("artifacts/decode_step/voxcpm2_decode_step.onnx"), help="ONNX output path.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
+    parser.add_argument("--cache-seq", type=int, default=16, help="Example valid KV-cache length entering the decode step.")
+    parser.add_argument("--inference-timesteps", type=int, default=10, help="Fixed CFM/LocDiT solver steps embedded in this one-step graph.")
+    parser.add_argument("--cfg-value", type=float, default=2.0, help="Example classifier-free guidance value.")
+    parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic export inputs.")
+    parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
+    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
+    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
     return parser
 
 

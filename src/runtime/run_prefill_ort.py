@@ -143,17 +143,29 @@ def run_prefill(args: argparse.Namespace) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Path-check and run VoxCPM2 prefill ONNX on ORT CPU.")
-    parser.add_argument("--onnx-path", type=Path, required=True)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--seq-len", type=int, default=16)
-    parser.add_argument("--patch-size", type=int, default=4)
-    parser.add_argument("--feat-dim", type=int, default=64)
-    parser.add_argument("--vocab-size", type=int, default=73448)
-    parser.add_argument("--mode", choices=["plain_tts", "voice_design", "controllable_clone", "ultimate_clone"], default="plain_tts")
-    parser.add_argument("--reference-steps", type=int, default=3)
-    parser.add_argument("--prompt-steps", type=int, default=3)
-    parser.add_argument("--seed", type=int, default=0)
+    parser = argparse.ArgumentParser(
+        description="Path-check and run the VoxCPM2Prefill ONNX graph with ONNX Runtime CPU.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Example: python -B src/runtime/run_prefill_ort.py "
+            "--onnx-path artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts"
+        ),
+    )
+    parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_prefill.onnx.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for the ORT run.")
+    parser.add_argument("--seq-len", type=int, default=16, help="Synthetic token/audio sequence length.")
+    parser.add_argument("--patch-size", type=int, default=4, help="Audio feature patch size expected by the graph.")
+    parser.add_argument("--feat-dim", type=int, default=64, help="Audio feature channel dimension expected by the graph.")
+    parser.add_argument("--vocab-size", type=int, default=73448, help="Synthetic tokenizer vocabulary upper bound.")
+    parser.add_argument(
+        "--mode",
+        choices=["plain_tts", "voice_design", "controllable_clone", "ultimate_clone"],
+        default="plain_tts",
+        help="Synthetic pathway layout used to exercise text/reference/prompt masks.",
+    )
+    parser.add_argument("--reference-steps", type=int, default=3, help="Synthetic reference-audio feature steps for clone modes.")
+    parser.add_argument("--prompt-steps", type=int, default=3, help="Synthetic prompt-audio feature steps for ultimate_clone.")
+    parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for synthetic input.")
     return parser
 
 

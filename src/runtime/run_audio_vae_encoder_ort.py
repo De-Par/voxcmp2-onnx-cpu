@@ -75,11 +75,18 @@ def run_encoder(args: argparse.Namespace) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Path-check and run AudioVAE encoder ONNX on ORT CPU.")
-    parser.add_argument("--onnx-path", type=Path, required=True)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--samples", type=int, default=20480)
-    parser.add_argument("--seed", type=int, default=0)
+    parser = argparse.ArgumentParser(
+        description="Path-check and run the AudioVAEEncoder ONNX graph with ONNX Runtime CPU.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Example: python -B src/runtime/run_audio_vae_encoder_ort.py "
+            "--onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx"
+        ),
+    )
+    parser.add_argument("--onnx-path", type=Path, required=True, help="Path to audio_vae_encoder.onnx.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for the ORT run.")
+    parser.add_argument("--samples", type=int, default=20480, help="Synthetic padded waveform length.")
+    parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for synthetic input.")
     return parser
 
 

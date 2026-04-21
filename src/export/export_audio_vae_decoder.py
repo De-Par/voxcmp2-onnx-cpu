@@ -145,14 +145,21 @@ def export_audio_vae_decoder(args: argparse.Namespace) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Export VoxCPM2 AudioVAE decoder ONNX.")
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/audio_vae_decoder/audio_vae_decoder.onnx"))
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--latent-steps", type=int, default=4)
-    parser.add_argument("--opset", type=int, default=18)
-    parser.add_argument("--local-files-only", action="store_true", default=True)
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only")
+    parser = argparse.ArgumentParser(
+        description="Export VoxCPM2 AudioVAE decoder to a standalone ONNX graph.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Example: python -B src/export/export_audio_vae_decoder.py "
+            "--output artifacts/audio_vae_decoder/audio_vae_decoder.onnx"
+        ),
+    )
+    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
+    parser.add_argument("--output", type=Path, default=Path("artifacts/audio_vae_decoder/audio_vae_decoder.onnx"), help="ONNX output path.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
+    parser.add_argument("--latent-steps", type=int, default=4, help="Example latent time steps used during export.")
+    parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
+    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
+    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
     return parser
 
 

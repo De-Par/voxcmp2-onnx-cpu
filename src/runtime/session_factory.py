@@ -50,6 +50,9 @@ class OrtSessionFactory:
         self.paths = self.paths.expanded()
 
     def validate_paths(self) -> dict[str, Path]:
+        # External-data ONNX exports store large weights next to the .onnx file.
+        # Validate both files before creating sessions so startup errors are
+        # actionable and do not depend on ONNX Runtime's lower-level messages.
         missing: list[str] = []
         resolved: dict[str, Path] = {}
         for name, path in self.paths.items():
@@ -97,6 +100,8 @@ class OrtSessionFactory:
     def _get(self, name: str, path: Path) -> ort.InferenceSession:
         if name not in self._sessions:
             self._assert_path(name, path)
+            # Providers are passed explicitly to avoid implicit accelerator
+            # fallback on machines that happen to have GPU/CoreML packages.
             session = ort.InferenceSession(
                 str(path),
                 sess_options=self._session_options(),

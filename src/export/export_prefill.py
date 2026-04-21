@@ -59,6 +59,9 @@ class VoxCPM2PrefillWrapper(torch.nn.Module):
         audio_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, ...]:
         model = self.model
+        # The export boundary is intentionally tensor-only. Host code has
+        # already handled tokenization, language text, reference/prompt audio
+        # alignment, and masks before this wrapper is called.
         text_tokens = text_tokens.to(dtype=torch.long)
         text_mask = text_mask.to(dtype=torch.float32)
         audio_features = audio_features.to(dtype=torch.float32)
@@ -93,6 +96,9 @@ class VoxCPM2PrefillWrapper(torch.nn.Module):
         base_k_cache, base_v_cache = self._stack_cache(base_cache_tuple)
         residual_k_cache, residual_v_cache = self._stack_cache(residual_cache_tuple)
 
+        # MiniCPM returns Python cache tuples. ONNX Runtime cannot pass those
+        # through a session boundary, so the wrapper exposes named tensor caches
+        # plus explicit valid lengths for the following decode_step graph.
         cache_length = torch.arange(text_tokens.shape[1], device=text_tokens.device, dtype=torch.long)[-1:] + 1
         residual_cache_length = cache_length.clone()
 
@@ -327,18 +333,30 @@ def export_prefill(args: argparse.Namespace) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Export VoxCPM2 prefill ONNX.")
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/prefill/voxcpm2_prefill.onnx"))
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--seq-len", type=int, default=16)
-    parser.add_argument("--mode", choices=["plain_tts", "voice_design", "controllable_clone", "ultimate_clone"], default="plain_tts")
-    parser.add_argument("--reference-steps", type=int, default=3)
-    parser.add_argument("--prompt-steps", type=int, default=3)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--opset", type=int, default=18)
-    parser.add_argument("--local-files-only", action="store_true", default=True)
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only")
+    parser = argparse.ArgumentParser(
+        description="Export the VoxCPM2 prefill neural boundary to ONNX.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Example: python -B src/export/export_prefill.py "
+            "--output artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts"
+        ),
+    )
+    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
+    parser.add_argument("--output", type=Path, default=Path("artifacts/prefill/voxcpm2_prefill.onnx"), help="ONNX output path.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
+    parser.add_argument("--seq-len", type=int, default=16, help="Example full prompt sequence length used during export.")
+    parser.add_argument(
+        "--mode",
+        choices=["plain_tts", "voice_design", "controllable_clone", "ultimate_clone"],
+        default="plain_tts",
+        help="Synthetic input layout used to exercise the prefill boundary during export.",
+    )
+    parser.add_argument("--reference-steps", type=int, default=3, help="Synthetic reference-audio feature steps for clone modes.")
+    parser.add_argument("--prompt-steps", type=int, default=3, help="Synthetic prompt-audio feature steps for ultimate_clone.")
+    parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic export inputs.")
+    parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
+    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
+    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
     return parser
 
 

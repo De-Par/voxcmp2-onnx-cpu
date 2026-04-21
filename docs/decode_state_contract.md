@@ -4,6 +4,8 @@
 
 `VoxCPM2DecodeStep` is one autoregressive decode step, not the full decode loop.
 
+This page defines the state tensors that cross the prefill/decode boundary. It should be read together with `docs/module_boundaries.md` before changing `src/export/export_decode_step.py` or `src/runtime/pipeline.py`.
+
 Host code owns:
 
 - loop counter and max/min length policy
@@ -90,3 +92,10 @@ Separate ONNX files for `VoxCPM2Prefill` and `VoxCPM2DecodeStep` will each conta
 - No WAV I/O or resampling in ONNX.
 - No graph optimization or quantization.
 - No removal of multilingual or reference-audio paths.
+
+## Verification
+
+```bash
+python -B src/runtime/run_decode_step_ort.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
+python -B tests/parity/test_decode_step.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
+```

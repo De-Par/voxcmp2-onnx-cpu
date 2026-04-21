@@ -11,6 +11,8 @@ The wrapper is `AudioVAEEncoderWrapper.forward(waveform) -> latent`, where:
 
 Host code remains responsible for loading audio, resampling to the AudioVAE encode sample rate, converting mono audio to `[B, 1, samples]`, and padding `samples` to a multiple of `audio_vae.chunk_size`.
 
+This page documents why the encoder wrapper does not call the full official `AudioVAE.encode()` helper directly: the helper mixes neural work with host-style shape and padding logic that is cleaner to keep outside ONNX.
+
 ## ONNX Blockers By Operation
 
 - `AudioVAE.encode()` rank branch: `if audio_data.ndim == 2: audio_data = audio_data.unsqueeze(1)`.
@@ -47,3 +49,11 @@ Observed smoke parity for `samples=20480`:
 - wrapper vs original `AudioVAE.encode()` on already padded input: exact match.
 - PyTorch wrapper vs ONNX Runtime: `max_abs_diff` about `8.6e-4`, `mean_abs_diff` about `7.9e-5`.
 - The parity script default tolerance is therefore `1e-3` for encoder FP32 CPU checks.
+
+## Reproduce
+
+```bash
+python -B src/export/export_audio_vae_encoder.py --output artifacts/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
+python -B tests/parity/test_audio_vae_encoder.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
+```

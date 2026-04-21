@@ -6,6 +6,8 @@ Target: VoxCPM2 exported to separate ONNX neural modules and executed with ONNX 
 
 "Fully ONNX" means all neural modules for the supported path are ONNX. Host code still performs text normalization, tokenization, WAV I/O, resampling, and orchestration.
 
+This page is the feature scope for v1. It intentionally separates required behavior from deferred work so publication does not imply unsupported capabilities.
+
 ## Matrix
 
 | Feature | V1 Status | Requirement |
@@ -28,3 +30,11 @@ Target: VoxCPM2 exported to separate ONNX neural modules and executed with ONNX 
 - Deferred and non-goal items are not implemented accidentally in v1.
 - No feature depends on hardcoded language, removed reference audio, or undocumented model simplification.
 - Unknown VoxCPM2 internals are recorded as blockers instead of replaced with assumptions.
+
+## Verification
+
+```bash
+python -B tests/smoke/test_cpu_only_runtime.py
+```
+
+The smoke test validates the runtime path for text-only synthesis and validates prefill tensor assembly for voice design, controllable clone, and ultimate clone.

@@ -61,6 +61,14 @@ DECODE_OUTPUTS = [
 
 
 class CharTokenizerWrapper:
+    """Minimal tokenizer adapter that avoids importing Transformers in runtime.
+
+    The official path splits multi-character Chinese tokens into individual
+    characters before inference. Keeping that behavior here preserves the
+    multilingual path while avoiding the heavier Transformers import, which can
+    transitively load PyTorch.
+    """
+
     def __init__(self, tokenizer: Tokenizer) -> None:
         self.tokenizer = tokenizer
         self.multichar_tokens = {
@@ -156,6 +164,9 @@ class VoxCPM2OnnxPipeline:
     ) -> np.ndarray:
         if max_steps < 1:
             raise ValueError("max_steps must be >= 1")
+        # Host code owns mode-specific sequence assembly. The prefill ONNX
+        # graph receives only tensors, so text/reference/prompt policy remains
+        # inspectable and testable outside the neural graph.
         sequence = self.build_prefill_inputs(
             text,
             mode=mode,
@@ -171,6 +182,9 @@ class VoxCPM2OnnxPipeline:
         generated: list[np.ndarray] = []
 
         for step in range(max_steps):
+            # One ONNX call equals one autoregressive decode step. KV cache
+            # tensors are explicit inputs/outputs because ONNX Runtime cannot
+            # mutate the official Python-side cache object.
             decode_inputs = {
                 "lm_hidden": state["lm_hidden"],
                 "residual_hidden": state["residual_hidden"],
@@ -201,12 +215,17 @@ class VoxCPM2OnnxPipeline:
             }
 
         feature_seq = np.concatenate(generated, axis=1)
+        # AudioVAEDecoder expects [B, latent_dim, latent_steps]. The decode-step
+        # graph emits patch features, so host code performs the reversible layout
+        # transform before the final ONNX decoder call.
         decoder_latent = np.transpose(feature_seq, (0, 3, 1, 2)).reshape(1, self.config.feat_dim, -1)
         sr_cond = np.array([self.config.decode_sample_rate], dtype=np.int32)
         waveform = self.sessions.audio_decoder.run(["waveform"], {"latent": decoder_latent, "sr_cond": sr_cond})[0]
         return waveform[0, 0].astype(np.float32, copy=False)
 
     def write_wav(self, path: str | Path, waveform: np.ndarray) -> None:
+        # WAV writing is intentionally host code, not ONNX. int16 output keeps
+        # the CLI artifact widely readable across platforms.
         target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
         clipped = np.clip(waveform, -1.0, 1.0)
@@ -236,6 +255,9 @@ class VoxCPM2OnnxPipeline:
             text_for_tokens = f"{prompt_text}{text}"
         else:
             text_for_tokens = text
+        # The prefill graph consumes a single aligned sequence. Text tokens,
+        # text_mask, audio_features, and audio_mask must therefore be assembled
+        # with identical sequence length before entering ONNX.
         text_tokens = np.array(self.tokenizer(text_for_tokens) + [self.config.audio_start_token], dtype=np.int64)
         text_len = int(text_tokens.shape[0])
         text_pad_feat = np.zeros((text_len, self.config.patch_size, self.config.feat_dim), dtype=np.float32)
@@ -296,6 +318,9 @@ class VoxCPM2OnnxPipeline:
     def _encode_wav(self, wav_path: str | Path | None, *, padding_mode: Literal["left", "right"]) -> np.ndarray:
         if wav_path is None:
             raise ValueError("wav_path is required")
+        # Audio file I/O and resampling stay outside ONNX. The AudioVAEEncoder
+        # graph receives rank-3 mono FP32 audio padded to a patch-compatible
+        # length by host code.
         sample_rate, audio = wavfile.read(str(wav_path))
         mono = self._to_float32_mono(audio)
         if sample_rate != self.config.encode_sample_rate:

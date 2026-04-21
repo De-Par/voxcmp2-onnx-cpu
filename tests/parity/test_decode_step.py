@@ -101,17 +101,20 @@ def test_decode_step_parity() -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Compare VoxCPM2 decode-step PyTorch and ONNX Runtime outputs.")
-    parser.add_argument("--onnx-path", type=Path, required=True)
-    parser.add_argument("--model-path", default="openbmb/VoxCPM2")
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--cache-seq", type=int, default=16)
-    parser.add_argument("--inference-timesteps", type=int, default=10)
-    parser.add_argument("--cfg-value", type=float, default=2.0)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--atol", type=float, default=1e-3)
-    parser.add_argument("--local-files-only", action="store_true", default=True)
-    parser.add_argument("--allow-download", action="store_false", dest="local_files_only")
+    parser = argparse.ArgumentParser(
+        description="Compare VoxCPM2DecodeStep PyTorch wrapper outputs against ONNX Runtime CPU outputs.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_decode_step.onnx.")
+    parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for parity input.")
+    parser.add_argument("--cache-seq", type=int, default=16, help="Synthetic valid KV-cache length entering the step.")
+    parser.add_argument("--inference-timesteps", type=int, default=10, help="CFM/LocDiT solver steps embedded in the exported graph.")
+    parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value.")
+    parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic parity input.")
+    parser.add_argument("--atol", type=float, default=1e-3, help="Maximum allowed absolute difference per tensor.")
+    parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files.")
+    parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow snapshot_download to fetch missing files.")
     return parser
 
 

@@ -8,6 +8,8 @@ The proposed v1 export keeps neural work in ONNX and keeps orchestration in host
 
 `VoxCPM.generate()` -> `VoxCPM._generate()` -> optional `build_prompt_cache()` -> `_generate_with_prompt_cache()` -> `_inference()` -> `AudioVAE.decode()`.
 
+This page is the main architectural reference for engineers adding export or runtime work. Typed Python schemas for the same boundaries live in `src/contracts/module_schemas.py`.
+
 ## Host Code
 
 These remain outside ONNX:
@@ -126,7 +128,16 @@ This split follows the traced execution without changing model behavior:
 - Small projections, scalar quantization, stop head, LocEnc, MiniCPM LMs, and LocDiT sampling stay inside prefill/decode-step wrappers where they are used, avoiding a fragile graph-per-layer export.
 - The design avoids a single monolithic ONNX graph while keeping the number of ORT sessions small enough for CPU-only execution.
 
-The matching typed schemas live in `src/contracts/module_schemas.py`.
+## Verification
+
+Use the per-module runtime checkers after export:
+
+```bash
+python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path artifacts/audio_vae_decoder/audio_vae_decoder.onnx
+python -B src/runtime/run_prefill_ort.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B src/runtime/run_decode_step_ort.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
+```
 
 ## Non-Goals
 

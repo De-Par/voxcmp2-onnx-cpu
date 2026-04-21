@@ -4,6 +4,8 @@
 
 Target runtime is CPU-only ONNX Runtime. PyTorch is allowed only in export and parity tooling, not in runtime orchestration.
 
+This audit is the runtime dependency gate for publication. If a new runtime module is added, include it in the checks below before release.
+
 Runtime path means:
 
 - `src/runtime/session_factory.py`

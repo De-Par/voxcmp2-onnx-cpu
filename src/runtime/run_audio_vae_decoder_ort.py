@@ -80,13 +80,20 @@ def run_decoder(args: argparse.Namespace) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Path-check and run AudioVAE decoder ONNX on ORT CPU.")
-    parser.add_argument("--onnx-path", type=Path, required=True)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--latent-dim", type=int, default=64)
-    parser.add_argument("--latent-steps", type=int, default=4)
-    parser.add_argument("--sample-rate", type=int, default=48000)
-    parser.add_argument("--seed", type=int, default=0)
+    parser = argparse.ArgumentParser(
+        description="Path-check and run the AudioVAEDecoder ONNX graph with ONNX Runtime CPU.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Example: python -B src/runtime/run_audio_vae_decoder_ort.py "
+            "--onnx-path artifacts/audio_vae_decoder/audio_vae_decoder.onnx"
+        ),
+    )
+    parser.add_argument("--onnx-path", type=Path, required=True, help="Path to audio_vae_decoder.onnx.")
+    parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for the ORT run.")
+    parser.add_argument("--latent-dim", type=int, default=64, help="AudioVAE latent channel dimension.")
+    parser.add_argument("--latent-steps", type=int, default=4, help="Synthetic latent time steps.")
+    parser.add_argument("--sample-rate", type=int, default=48000, help="Decoder sample-rate condition tensor value.")
+    parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for synthetic input.")
     return parser
 
 

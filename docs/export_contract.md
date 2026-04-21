@@ -14,6 +14,19 @@ Target platforms:
 
 "Fully ONNX" means every neural module required by the supported VoxCPM2 paths is exported to ONNX. Text normalization, tokenization, WAV I/O, resampling, configuration loading, and orchestration remain in host code.
 
+This page is the publication contract for export work. It defines what an exported artifact set must provide before it can be used by the CPU-only runtime.
+
+## Current Implementation Status
+
+The repository currently provides export scripts for:
+
+- `AudioVAEEncoder`
+- `AudioVAEDecoder`
+- `VoxCPM2Prefill`
+- `VoxCPM2DecodeStep`
+
+Each script logs input names, output names, dtypes, and dynamic/static dimensions. A formal machine-readable export manifest is still a release-candidate requirement; until then, `src/runtime/session_factory.py` uses explicit default paths and the docs define the contract.
+
 ## Required V1 Modes
 
 The export must preserve the neural paths needed for:
@@ -36,7 +49,7 @@ Streaming is deferred to v2 and must not shape the v1 export contract.
 
 ## Required Artifacts
 
-The export step must produce:
+A stable export step must produce:
 
 - one ONNX file per exported neural module
 - a machine-readable manifest listing every ONNX file, module role, opset, expected inputs, expected outputs, dtypes, and dynamic axes
@@ -50,6 +63,15 @@ The export step must produce:
 - ONNX graphs load with ONNX Runtime CPU execution provider on all target platform classes.
 - FP32 module-level parity checks exist for each exported graph.
 - Any unsupported operator, dynamic-shape issue, or required math change is documented before implementation work continues.
+
+## Reproduce
+
+```bash
+python -B src/export/export_audio_vae_encoder.py --output artifacts/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/export/export_audio_vae_decoder.py --output artifacts/audio_vae_decoder/audio_vae_decoder.onnx
+python -B src/export/export_prefill.py --output artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B src/export/export_decode_step.py --output artifacts/decode_step/voxcpm2_decode_step.onnx --cache-seq 16
+```
 
 ## Non-Goals
 
