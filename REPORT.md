@@ -33,7 +33,7 @@ Mode mapping:
 - `stop_head`: stop predictor layers.
 - `audio_vae_decoder`: `AudioVAEV2.decode()` for latent features to waveform.
 
-Host code remains responsible for text normalization, tokenization, WAV I/O, resampling through `librosa`, prompt-cache orchestration, retry policy, and mode selection.
+Host code remains responsible for text normalization, tokenization, WAV I/O, resampling, prompt-cache orchestration, retry policy, and mode selection. The official traced implementation imports its own audio stack; the ONNX CPU runtime in this repository uses SciPy for WAV I/O/resampling to keep deployment dependencies smaller.
 
 ## Trace Tool
 
