@@ -1,6 +1,23 @@
+# OS / editor noise
 .DS_Store
-__pycache__
-.venv
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local virtual environments
+.venv/
+
+# Upstream checkout is managed as an optional local submodule/worktree.
 third_party/
+
+# Generated ONNX models, external data, benchmark WAVs, JSON reports, and traces.
 artifacts/
 traces/
+
+# Local package/build outputs
+*.egg-info/
+build/
+dist/
