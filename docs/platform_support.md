@@ -55,7 +55,7 @@ These remain outside ONNX on every platform:
 ```bash
 python -B -m py_compile src/runtime/session_factory.py src/runtime/pipeline.py src/cli/synthesize.py tests/smoke/test_cpu_only_runtime.py
 python -B tests/smoke/test_cpu_only_runtime.py
-python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/runtime_smoke.wav --max-steps 1 --mode text_only
+python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/runtime_sample.wav --mode text_only
 rg -n "import torch|from torch|soundfile|librosa|transformers|CUDAExecutionProvider|CoreMLExecutionProvider|MPSExecutionProvider" src/runtime src/cli tests/smoke
 ```
 

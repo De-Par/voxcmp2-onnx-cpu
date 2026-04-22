@@ -114,13 +114,12 @@ ONNX checker and ONNX Runtime CPU session load passed for all four converted mod
 - `VoxCPM2Prefill`: output caches and hidden states were `float32`, cache lengths were `int64`.
 - `VoxCPM2DecodeStep`: output feature, hidden, and cache tensors were `float32`, next cache lengths were `int64`.
 
-An end-to-end text-only smoke using the copied BF16-initializer artifacts also reached waveform:
+An end-to-end text-only sample using the copied BF16-initializer artifacts also reached waveform:
 
 ```bash
 python -B src/cli/synthesize.py \
   --text "Hello from VoxCPM2." \
-  --output artifacts/bf16_experiment/runtime_smoke.wav \
-  --max-steps 1 \
+  --output artifacts/bf16_experiment/runtime_sample.wav \
   --mode text_only \
   --audio-encoder-onnx artifacts/bf16_experiment/audio_vae_encoder/audio_vae_encoder.onnx \
   --audio-decoder-onnx artifacts/bf16_experiment/audio_vae_decoder/audio_vae_decoder.onnx \

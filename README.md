@@ -185,8 +185,7 @@ The smoke test verifies:
 ```bash
 python -B src/cli/synthesize.py \
   --text "Hello from VoxCPM2." \
-  --output artifacts/runtime_smoke.wav \
-  --max-steps 1 \
+  --output artifacts/runtime_sample.wav \
   --mode text_only
 ```
 
@@ -197,11 +196,12 @@ python -B src/cli/synthesize.py \
   --mode voice_design \
   --voice-design "calm voice" \
   --text "Hello from VoxCPM2." \
-  --output artifacts/voice_design.wav \
-  --max-steps 1
+  --output artifacts/voice_design.wav
 ```
 
 For clone modes, provide `--reference-wav`, and for ultimate clone also provide `--prompt-wav` and `--prompt-text`.
+
+`--max-steps` is optional. The default `--max-steps 0` means "run until the model emits stop logits" with an internal safety cap. `--max-steps 1 --min-steps 0` is only for very fast graph-load smoke checks and writes a deliberately truncated WAV.
 
 ## Benchmark Variants
 
@@ -211,14 +211,10 @@ Compare the official VoxCPM2 API, ONNX FP32, and experimental ONNX BF16 artifact
 python -B src/bench/compare_pipelines.py \
   --text "Hello from VoxCPM2." \
   --output-dir artifacts/bench \
-  --variants orig onnx_fp32 onnx_bf16 \
-  --max-steps 1 \
-  --orig-max-len 1 \
-  --orig-min-len 0 \
-  --orig-inference-timesteps 1
+  --variants orig onnx_fp32 onnx_bf16
 ```
 
-The benchmark prints one JSON line per variant with:
+The benchmark prints human-readable progress and saves JSON to `artifacts/bench/report.json` unless `--report-json` overrides the path. Each result contains:
 
 - `output_wav`
 - `load_seconds`
@@ -226,6 +222,10 @@ The benchmark prints one JSON line per variant with:
 - `total_seconds`
 - `sample_rate`
 - `samples`
+- `duration_seconds`
+- `peak`
+- `rms`
+- `decode_steps` / `stop_reason` for ONNX variants
 
 BF16 paths default to `artifacts/bf16_experiment/*`. Production FP32 defaults are not changed.
 
@@ -264,7 +264,7 @@ Before publishing a release candidate:
 ```bash
 python -B -m py_compile $(find src tests -name '*.py' -print)
 python -B tests/smoke/test_cpu_only_runtime.py
-python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/runtime_smoke.wav --max-steps 1 --mode text_only
+python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/runtime_sample.wav --mode text_only
 rg -n "import torch|from torch|soundfile|librosa|transformers" src/runtime src/cli tests/smoke
 git diff --check
 ```
