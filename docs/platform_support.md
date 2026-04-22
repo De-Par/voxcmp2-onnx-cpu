@@ -22,6 +22,7 @@ This page records code-level platform support and the checks required before cla
 - Runtime path does not import PyTorch, Transformers, `soundfile`, or `librosa`.
 - Paths use `pathlib.Path`; no POSIX-only path joining or shell invocation is required by runtime code.
 - ONNX artifacts may use external data files and must remain next to their `.onnx` model files.
+- FP32 and BF16 artifact families must use the same runtime path and CPU execution provider.
 
 ## Dependency Portability Notes
 
@@ -47,7 +48,8 @@ These remain outside ONNX on every platform:
 - `src/runtime/session_factory.py` rejects unavailable or forbidden execution providers.
 - `src/runtime/pipeline.py` can run text-only synthesis without loading PyTorch or accelerator providers.
 - Reference and prompt WAV paths use host WAV/resampling code and stay available for controllable clone and ultimate clone modes.
-- The same exported module set is used on every platform; no platform-specific ONNX graph is required for v1.
+- The same exported module set is used on every platform for each precision family; no platform-specific ONNX graph is required for v1.
+- FP32 and BF16 release signoff requires the same smoke, baseline, and profile checks on each target platform class.
 - Release signoff requires the smoke test below on each target platform class.
 
 ## Verification Commands
@@ -69,5 +71,5 @@ Expected results:
 
 - GPU or vendor accelerator support.
 - Platform-specific graph optimization.
-- Quantization or BF16.
+- Quantization.
 - Replacing host tokenizer, WAV I/O, resampling, or orchestration with ONNX graphs.

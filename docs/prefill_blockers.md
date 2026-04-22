@@ -45,12 +45,12 @@ Text normalization, tokenizer behavior, language handling, WAV loading/resamplin
 - MiniCPM cache return type: upstream returns a Python `list[tuple[key, value]]`. The wrapper immediately stacks it into named tensor outputs.
 - `scaled_dot_product_attention(enable_gqa=True)`: this is the main exporter/runtime risk. The wrapper does not replace attention math; if export fails on a PyTorch/ONNX version, the minimal next step is an export-only attention wrapper that expands grouped KV heads before SDPA or lowers attention to matmul/softmax.
 - LongRoPE cache indexing: RoPE uses dynamic `arange` and cached `cos/sin` indexing by sequence length. This should stay inside ONNX if exported cleanly; failures should be localized before changing math.
-- FP32 target: upstream config is BF16, but the export loader casts the full prefill path to FP32 for CPU correctness first. BF16 and quantization are non-goals for this path.
+- Current FP32 export target: upstream config is BF16, but the export loader casts the full prefill path to FP32 for CPU correctness first. Production BF16 is a parallel artifact target defined in `docs/precision_strategy.md`; storage-only BF16 with broad casts is not the final target. Quantization is a non-goal for this path.
 
 ## Acceptance Criteria
 
 - `torch.onnx.export(..., dynamo=True, external_data=True)` is used.
-- ONNX graph has only CPU-targeted FP32 neural inputs except `text_tokens` and cache lengths.
+- Current FP32 ONNX graph has CPU-targeted FP32 neural inputs except `text_tokens` and cache lengths. Production BF16 must keep the same public input/output contract unless an explicitly documented mixed-precision boundary is required.
 - Exported inputs/outputs are named and logged with dtype and dynamic/static dimensions.
 - `onnx.checker.check_model(str(path))` is used by the runtime script for path-based checking.
 - Parity compares PyTorch wrapper outputs against ONNX Runtime CPU outputs without logging full tensors.

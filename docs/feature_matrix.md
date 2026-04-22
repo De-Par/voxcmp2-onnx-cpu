@@ -18,8 +18,8 @@ This page is the feature scope for v1. It intentionally separates required behav
 | Ultimate cloning | Must have | Preserve reference-audio path required by the source model. |
 | Multilingual operation | Must have | Preserve multilingual path; language must not be hardcoded. |
 | Streaming | Defer v2 | No v1 implementation or export requirement. |
-| FP32 execution | Must have | Baseline correctness target. |
-| BF16 execution | Defer | Later experiment only after FP32 parity. |
+| FP32 execution | Must have | Production correctness anchor and optimized artifact family. |
+| BF16 execution | Must have | Parallel production artifact family with the same runtime path, quality criteria, and feature coverage as FP32. |
 | Quantization | Non-goal | No v1 requirement. |
 | GPU or accelerator execution | Non-goal | CPU execution provider only. |
 | Single merged ONNX model | Non-goal | Module boundaries must remain separate. |
@@ -30,6 +30,7 @@ This page is the feature scope for v1. It intentionally separates required behav
 - Deferred and non-goal items are not implemented accidentally in v1.
 - No feature depends on hardcoded language, removed reference audio, or undocumented model simplification.
 - Unknown VoxCPM2 internals are recorded as blockers instead of replaced with assumptions.
+- FP32 and BF16 artifacts are compared against the official VoxCPM2 API on CPU for quality and performance.
 
 ## Verification
 

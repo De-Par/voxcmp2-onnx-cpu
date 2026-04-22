@@ -22,7 +22,7 @@ Known causes:
 - The official API has `retry_badcase=True` by default at the public API layer. The benchmark keeps retries off unless `--orig-retry-badcase` is passed so a retry does not hide the first-pass behavior.
 - The ONNX decode-step graph uses explicit tensor-in/tensor-out K/V caches. This is exportable and inspectable, but it is heavier than the official Python-side mutable cache.
 
-The current BF16 artifacts are also not a full BF16 compute runtime. `src/experiments/bf16_feasibility.py` converts selected FLOAT initializers to BFLOAT16 storage and inserts Cast nodes back to FLOAT. This tests model size and ORT CPU loader coverage while keeping most compute in FP32.
+The current BF16 artifacts are also not a full production BF16 compute runtime. `src/experiments/bf16_feasibility.py` converts selected FLOAT initializers to BFLOAT16 storage and inserts Cast nodes back to FLOAT. This tests model size and ORT CPU loader coverage while keeping most compute in FP32. The production BF16 target is defined in `docs/precision_strategy.md` and must minimize this Cast churn.
 
 ## Runtime Knobs
 
@@ -86,13 +86,13 @@ Try `--onnx-intra-op-threads` values around the number of physical performance c
 ## Acceptance Criteria
 
 - ONNX sessions report only `CPUExecutionProvider`.
-- Tuning flags do not change default FP32 behavior unless explicitly passed.
+- Tuning flags do not change runtime semantics unless explicitly passed.
 - Benchmark output prints the active ORT settings.
 - JSON reports remain saved to disk; large raw reports are not printed to the terminal.
 
 ## Non-Goals
 
-- No BF16 replacement for the FP32 runtime.
+- No storage-only BF16 conversion as the final production BF16 strategy.
 - No quantization.
 - No accelerator provider fallback.
 - No merging prefill, decode loop, and AudioVAE into one ONNX graph.

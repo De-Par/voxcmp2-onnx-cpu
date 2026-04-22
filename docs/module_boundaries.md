@@ -143,4 +143,4 @@ python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode
 
 - No single merged VoxCPM2 ONNX model.
 - No tokenizer, text normalization, audio file I/O, resampling, orchestration loop, or WAV writing in ONNX.
-- No BF16 or quantized boundary contract for v1; schemas use FP32 neural tensors for CPU correctness first.
+- The public boundary contract is shared by FP32 and BF16 artifact families: module names, input/output names, ranks, dynamic axes, and cache/state semantics must match. Host-visible dtype differences or mixed-precision islands must be documented by the precision manifest. Quantized boundaries are not part of v1.
