@@ -13,17 +13,36 @@ import onnxruntime as ort
 import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
-from src.export.export_audio_vae_decoder import _resolve_model_path
-from src.export.export_decode_step import (
-    INPUT_NAMES,
-    OUTPUT_NAMES,
-    VoxCPM2DecodeStepWrapper,
-    _model_dims,
-    make_synthetic_decode_step_inputs,
-)
-from src.export.export_prefill import load_voxcpm2_prefill_model
+
+def _ensure_repo_root_on_path() -> None:
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _decode_step_helpers():
+    _ensure_repo_root_on_path()
+
+    from src.export.export_audio_vae_decoder import _resolve_model_path
+    from src.export.export_decode_step import (
+        INPUT_NAMES,
+        OUTPUT_NAMES,
+        VoxCPM2DecodeStepWrapper,
+        _model_dims,
+        make_synthetic_decode_step_inputs,
+    )
+    from src.export.export_prefill import load_voxcpm2_prefill_model
+
+    return (
+        INPUT_NAMES,
+        OUTPUT_NAMES,
+        VoxCPM2DecodeStepWrapper,
+        _model_dims,
+        make_synthetic_decode_step_inputs,
+        load_voxcpm2_prefill_model,
+        _resolve_model_path,
+    )
 
 
 def _compare_output(name: str, torch_value: np.ndarray, ort_value: np.ndarray) -> dict[str, float | list[int] | str]:
@@ -49,6 +68,15 @@ def _compare_output(name: str, torch_value: np.ndarray, ort_value: np.ndarray) -
 
 
 def compare_decode_step(args: argparse.Namespace) -> dict[str, object]:
+    (
+        INPUT_NAMES,
+        OUTPUT_NAMES,
+        VoxCPM2DecodeStepWrapper,
+        _model_dims,
+        make_synthetic_decode_step_inputs,
+        load_voxcpm2_prefill_model,
+        _resolve_model_path,
+    ) = _decode_step_helpers()
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
     model = load_voxcpm2_prefill_model(model_dir)
     wrapper = VoxCPM2DecodeStepWrapper(model, inference_timesteps=args.inference_timesteps).eval()

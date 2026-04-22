@@ -14,9 +14,20 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
-from src.runtime.pipeline import VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig
+
+def _ensure_repo_root_on_path() -> None:
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _runtime_classes():
+    _ensure_repo_root_on_path()
+
+    from src.runtime.pipeline import VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig
+
+    return VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig
 
 
 class _FakeSession:
@@ -75,7 +86,8 @@ class _FakeSessions:
         return [np.zeros((1, 1, latent_steps), dtype=np.float32)]
 
 
-def _fake_pipeline(stop_after: int | None, *, safety_max_steps: int = 16) -> tuple[VoxCPM2OnnxPipeline, _FakeSessions]:
+def _fake_pipeline(stop_after: int | None, *, safety_max_steps: int = 16) -> tuple[object, _FakeSessions]:
+    VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig = _runtime_classes()
     sessions = _FakeSessions(stop_after=stop_after)
     config = VoxCPM2RuntimeConfig(feat_dim=2, patch_size=1, decode_safety_max_steps=safety_max_steps)
     pipeline = VoxCPM2OnnxPipeline(sessions=sessions, config=config)

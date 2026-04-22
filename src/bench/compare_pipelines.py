@@ -24,23 +24,33 @@ from scipy.io import wavfile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM_SRC = REPO_ROOT / "third_party" / "VoxCPM" / "src"
-sys.path.insert(0, str(REPO_ROOT))
-
-from src.runtime.pipeline import VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig
-from src.runtime.session_factory import OnnxModelPaths
 
 
 Variant = Literal["orig", "onnx_fp32", "onnx_bf16"]
 SILENCE_PEAK_THRESHOLD = 1e-5
-ONNX_AUTO_SAFETY_MAX_STEPS = VoxCPM2RuntimeConfig().decode_safety_max_steps
 
 
-BF16_MODEL_PATHS = OnnxModelPaths(
-    audio_encoder=REPO_ROOT / "artifacts" / "bf16_experiment" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
-    audio_decoder=REPO_ROOT / "artifacts" / "bf16_experiment" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
-    prefill=REPO_ROOT / "artifacts" / "bf16_experiment" / "prefill" / "voxcpm2_prefill.onnx",
-    decode_step=REPO_ROOT / "artifacts" / "bf16_experiment" / "decode_step" / "voxcpm2_decode_step.onnx",
-)
+BF16_MODEL_PATH_VALUES = {
+    "audio_encoder": REPO_ROOT / "artifacts" / "bf16_experiment" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
+    "audio_decoder": REPO_ROOT / "artifacts" / "bf16_experiment" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
+    "prefill": REPO_ROOT / "artifacts" / "bf16_experiment" / "prefill" / "voxcpm2_prefill.onnx",
+    "decode_step": REPO_ROOT / "artifacts" / "bf16_experiment" / "decode_step" / "voxcpm2_decode_step.onnx",
+}
+
+
+def _ensure_repo_root_on_path() -> None:
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _runtime_classes():
+    _ensure_repo_root_on_path()
+
+    from src.runtime.pipeline import VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig
+    from src.runtime.session_factory import OnnxModelPaths
+
+    return VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig, OnnxModelPaths
 
 
 @dataclass(frozen=True)
@@ -143,8 +153,9 @@ def _validate_mode_args(args: argparse.Namespace) -> None:
             raise ValueError("ultimate_clone requires --prompt-wav and --prompt-text")
 
 
-def _onnx_paths(args: argparse.Namespace, variant: Variant) -> OnnxModelPaths:
-    defaults = OnnxModelPaths() if variant == "onnx_fp32" else BF16_MODEL_PATHS
+def _onnx_paths(args: argparse.Namespace, variant: Variant):
+    _, _, OnnxModelPaths = _runtime_classes()
+    defaults = OnnxModelPaths() if variant == "onnx_fp32" else OnnxModelPaths(**BF16_MODEL_PATH_VALUES)
     prefix = "fp32" if variant == "onnx_fp32" else "bf16"
     return OnnxModelPaths(
         audio_encoder=getattr(args, f"{prefix}_audio_encoder_onnx") or defaults.audio_encoder,
@@ -155,6 +166,7 @@ def _onnx_paths(args: argparse.Namespace, variant: Variant) -> OnnxModelPaths:
 
 
 def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> BenchResult:
+    VoxCPM2OnnxPipeline, _, _ = _runtime_classes()
     total_start = time.perf_counter()
     load_start = time.perf_counter()
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts(
@@ -313,8 +325,11 @@ def _report_path(args: argparse.Namespace) -> Path:
 
 
 def _print_header(args: argparse.Namespace) -> None:
+    _, VoxCPM2RuntimeConfig, _ = _runtime_classes()
     max_steps_text = (
-        f"auto-until-stop (safety cap: {ONNX_AUTO_SAFETY_MAX_STEPS})" if args.max_steps == 0 else str(args.max_steps)
+        f"auto-until-stop (safety cap: {VoxCPM2RuntimeConfig().decode_safety_max_steps})"
+        if args.max_steps == 0
+        else str(args.max_steps)
     )
     print("=" * 72, flush=True)
     print("VoxCPM2 benchmark", flush=True)

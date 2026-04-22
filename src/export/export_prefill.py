@@ -12,9 +12,20 @@ from typing import Any, Literal
 import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
-from src.export.export_audio_vae_decoder import _resolve_model_path
+
+def _ensure_repo_root_on_path() -> None:
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _decoder_helpers():
+    _ensure_repo_root_on_path()
+
+    from src.export.export_audio_vae_decoder import _resolve_model_path
+
+    return _resolve_model_path
 
 
 INPUT_NAMES = ["text_tokens", "text_mask", "audio_features", "audio_mask"]
@@ -289,6 +300,7 @@ def _shape_report(model: torch.nn.Module, batch_size: int, seq_len: int, mode: s
 
 
 def export_prefill(args: argparse.Namespace) -> None:
+    _resolve_model_path = _decoder_helpers()
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
     output_path = args.output.expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)

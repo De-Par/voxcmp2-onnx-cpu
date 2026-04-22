@@ -13,13 +13,25 @@ import onnxruntime as ort
 import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
-from src.export.export_audio_vae_decoder import _load_audio_vae, _resolve_model_path
-from src.export.export_audio_vae_encoder import AudioVAEEncoderWrapper
+
+def _ensure_repo_root_on_path() -> None:
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _encoder_helpers():
+    _ensure_repo_root_on_path()
+
+    from src.export.export_audio_vae_decoder import _load_audio_vae, _resolve_model_path
+    from src.export.export_audio_vae_encoder import AudioVAEEncoderWrapper
+
+    return AudioVAEEncoderWrapper, _load_audio_vae, _resolve_model_path
 
 
 def compare_audio_vae_encoder(args: argparse.Namespace) -> dict[str, float | list[int] | str]:
+    AudioVAEEncoderWrapper, _load_audio_vae, _resolve_model_path = _encoder_helpers()
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
     audio_vae = _load_audio_vae(model_dir)
     if args.samples % audio_vae.chunk_size != 0:

@@ -11,10 +11,22 @@ import numpy as np
 from scipy.io import wavfile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
-from src.runtime.pipeline import VoxCPM2OnnxPipeline
-from src.runtime.session_factory import CPU_PROVIDER
+
+def _ensure_repo_root_on_path() -> None:
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _runtime_classes():
+    _ensure_repo_root_on_path()
+
+    from src.runtime.pipeline import VoxCPM2OnnxPipeline
+    from src.runtime.session_factory import CPU_PROVIDER
+
+    return VoxCPM2OnnxPipeline, CPU_PROVIDER
+
 
 TORCH_MODULE_NAME = "to" + "rch"
 FORBIDDEN_RUNTIME_MODULES = (TORCH_MODULE_NAME, "sound" + "file", "lib" + "rosa")
@@ -26,6 +38,7 @@ def _assert_no_forbidden_runtime_modules() -> None:
 
 
 def test_cpu_only_runtime_smoke() -> None:
+    VoxCPM2OnnxPipeline, CPU_PROVIDER = _runtime_classes()
     _assert_no_forbidden_runtime_modules()
 
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts()

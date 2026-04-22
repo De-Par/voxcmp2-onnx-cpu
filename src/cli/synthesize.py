@@ -9,13 +9,25 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
-from src.runtime.pipeline import VoxCPM2OnnxPipeline
-from src.runtime.session_factory import OnnxModelPaths
+
+def _ensure_repo_root_on_path() -> None:
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _runtime_classes():
+    _ensure_repo_root_on_path()
+
+    from src.runtime.pipeline import VoxCPM2OnnxPipeline
+    from src.runtime.session_factory import OnnxModelPaths
+
+    return VoxCPM2OnnxPipeline, OnnxModelPaths
 
 
 def _parser() -> argparse.ArgumentParser:
+    _, OnnxModelPaths = _runtime_classes()
     defaults = OnnxModelPaths()
     parser = argparse.ArgumentParser(
         description="Run the VoxCPM2 CPU-only ONNX Runtime synthesis pipeline.",
@@ -74,6 +86,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    VoxCPM2OnnxPipeline, OnnxModelPaths = _runtime_classes()
     paths = OnnxModelPaths(
         audio_encoder=args.audio_encoder_onnx,
         audio_decoder=args.audio_decoder_onnx,
