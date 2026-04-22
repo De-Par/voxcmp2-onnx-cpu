@@ -20,6 +20,7 @@ Both families must use:
 - the same module boundaries
 - the same input/output names
 - the same host-visible ranks and dynamic axes
+- the same production shape profile
 - the same fixed-capacity cache/state contract
 - the same runtime path
 - the same feature coverage
@@ -35,6 +36,17 @@ The profile registry is in `src/export/common.py`.
 | `bf16` | `bfloat16` | `float32` | production BF16 compute target |
 
 Host-visible floating tensors remain FP32 for both profiles. This keeps the runtime path identical and localizes precision decisions inside export wrappers and graph metadata.
+
+## Shape Policy
+
+Precision and shape are independent policies. The production shape profile applies identically to FP32 and BF16:
+
+- static `batch=1`
+- bounded prompt/reference/prefill sequence
+- bounded decode cache capacity
+- bounded AudioVAE encoder and decoder time axes
+
+Changing a bound requires re-exporting both precision families with the same shape flags and passing matching runtime bounds. It must not create separate FP32/BF16 runtime logic.
 
 ## 🧠 BF16 Compute Policy
 

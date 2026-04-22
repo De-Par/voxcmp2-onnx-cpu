@@ -5,15 +5,58 @@ from __future__ import annotations
 import argparse
 import json
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
 PrecisionName = Literal["fp32", "bf16"]
+ShapeProfileName = Literal["production", "flex"]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ONNX_ROOT = REPO_ROOT / "models" / "onnx"
 PRECISION_CHOICES: tuple[PrecisionName, ...] = ("fp32", "bf16")
+SHAPE_PROFILE_CHOICES: tuple[ShapeProfileName, ...] = ("production", "flex")
+
+
+@dataclass(frozen=True)
+class ShapeProfile:
+    """Export-time shape policy shared by FP32 and BF16 artifacts"""
+
+    name: ShapeProfileName
+    static_batch: bool
+    batch_size: int
+    max_audio_samples: int | None
+    max_decoder_latent_steps: int | None
+    max_prefill_seq: int | None
+    max_decode_cache_seq: int | None
+    description: str
+
+
+SHAPE_PROFILES: dict[ShapeProfileName, ShapeProfile] = {
+    "production": ShapeProfile(
+        name="production",
+        static_batch=True,
+        batch_size=1,
+        max_audio_samples=960_000,
+        max_decoder_latent_steps=16_384,
+        max_prefill_seq=1_024,
+        max_decode_cache_seq=6_144,
+        description=(
+            "Production CPU runtime profile: batch=1 with bounded prompt/audio/decode dimensions. "
+            "The same profile is used for FP32 and BF16 exports."
+        ),
+    ),
+    "flex": ShapeProfile(
+        name="flex",
+        static_batch=False,
+        batch_size=1,
+        max_audio_samples=None,
+        max_decoder_latent_steps=None,
+        max_prefill_seq=None,
+        max_decode_cache_seq=None,
+        description="Internal/debug profile preserving the previous broadly dynamic export shapes.",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -275,6 +318,52 @@ def add_precision_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_shape_profile_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--shape-profile",
+        choices=SHAPE_PROFILE_CHOICES,
+        default="production",
+        help=(
+            "Export shape policy. production specializes batch=1 and bounded dimensions; "
+            "flex keeps broader dynamic shapes for internal debugging."
+        ),
+    )
+
+
+def get_shape_profile(name: str) -> ShapeProfile:
+    if name not in SHAPE_PROFILES:
+        choices = ", ".join(SHAPE_PROFILE_CHOICES)
+        raise ValueError(f"unsupported shape profile {name!r}; expected one of: {choices}")
+    return SHAPE_PROFILES[name]  # type: ignore[index]
+
+
+def resolve_shape_profile(args: argparse.Namespace) -> ShapeProfile:
+    profile = get_shape_profile(args.shape_profile)
+    overrides = {
+        "max_audio_samples": getattr(args, "max_samples", None),
+        "max_decoder_latent_steps": getattr(args, "max_latent_steps", None),
+        "max_prefill_seq": getattr(args, "max_seq_len", None),
+        "max_decode_cache_seq": getattr(args, "max_cache_seq_bound", None),
+    }
+    return replace(profile, **{key: value for key, value in overrides.items() if value is not None})
+
+
+def bounded_dim(name: str, *, minimum: int = 1, maximum: int | None = None) -> Any:
+    import torch
+
+    if maximum is None:
+        return torch.export.Dim(name, min=minimum)
+    return torch.export.Dim(name, min=minimum, max=maximum)
+
+
+def validate_static_batch(batch_size: int, shape_profile: ShapeProfile) -> None:
+    if shape_profile.static_batch and batch_size != shape_profile.batch_size:
+        raise ValueError(
+            f"shape profile {shape_profile.name!r} requires --batch-size {shape_profile.batch_size}; "
+            "use --shape-profile flex for non-production batch experiments"
+        )
+
+
 def get_precision_profile(name: str) -> PrecisionProfile:
     if name not in PRECISION_PROFILES:
         choices = ", ".join(PRECISION_CHOICES)
@@ -349,6 +438,21 @@ def add_precision_metadata(
     return enriched
 
 
+def add_shape_metadata(report: dict[str, Any], shape_profile: ShapeProfile) -> dict[str, Any]:
+    enriched = deepcopy(report)
+    enriched["shape_profile"] = {
+        "name": shape_profile.name,
+        "static_batch": shape_profile.static_batch,
+        "batch_size": shape_profile.batch_size if shape_profile.static_batch else "dynamic",
+        "max_audio_samples": shape_profile.max_audio_samples,
+        "max_decoder_latent_steps": shape_profile.max_decoder_latent_steps,
+        "max_prefill_seq": shape_profile.max_prefill_seq,
+        "max_decode_cache_seq": shape_profile.max_decode_cache_seq,
+        "description": shape_profile.description,
+    }
+    return enriched
+
+
 def print_export_plan(
     *,
     module_key: str,
@@ -357,6 +461,7 @@ def print_export_plan(
     output_names: list[str],
     shape_report: dict[str, Any],
     output_path: Path,
+    shape_profile: ShapeProfile | None = None,
 ) -> None:
     print(f"module={MODULE_EXPORT_CONTRACTS[module_key].display_name}")
     print(f"precision={precision.name}")
@@ -364,10 +469,10 @@ def print_export_plan(
     print(f"host_float_dtype={precision.host_float_dtype}")
     print("input_names=" + ",".join(input_names))
     print("output_names=" + ",".join(output_names))
-    print(
-        "shape_report="
-        + json.dumps(add_precision_metadata(shape_report, precision, module_key=module_key), sort_keys=True)
-    )
+    enriched_report = add_precision_metadata(shape_report, precision, module_key=module_key)
+    if shape_profile is not None:
+        enriched_report = add_shape_metadata(enriched_report, shape_profile)
+    print("shape_report=" + json.dumps(enriched_report, sort_keys=True))
     print(f"output_path={output_path}")
 
 

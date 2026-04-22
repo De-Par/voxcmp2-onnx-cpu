@@ -109,6 +109,10 @@ class VoxCPM2RuntimeConfig:
     audio_chunk_size: int = 640
     decode_chunk_size: int = 4
     decode_safety_max_steps: int = 4096
+    max_audio_encoder_samples: int = 960_000
+    max_decoder_latent_steps: int = 16_384
+    max_prefill_seq_len: int = 1_024
+    max_decode_cache_seq: int = 6_144
 
 
 @dataclass(frozen=True)
@@ -147,8 +151,20 @@ class VoxCPM2OnnxPipeline:
         inter_op_num_threads: int | None = None,
         enable_profiling: bool = False,
         profile_file_prefix: Path | None = None,
+        max_audio_encoder_samples: int | None = None,
+        max_decoder_latent_steps: int | None = None,
+        max_prefill_seq_len: int | None = None,
+        max_decode_cache_seq: int | None = None,
     ) -> "VoxCPM2OnnxPipeline":
-        config = VoxCPM2RuntimeConfig(model_path=model_path, local_files_only=local_files_only)
+        default_config = VoxCPM2RuntimeConfig(model_path=model_path, local_files_only=local_files_only)
+        config = VoxCPM2RuntimeConfig(
+            model_path=model_path,
+            local_files_only=local_files_only,
+            max_audio_encoder_samples=max_audio_encoder_samples or default_config.max_audio_encoder_samples,
+            max_decoder_latent_steps=max_decoder_latent_steps or default_config.max_decoder_latent_steps,
+            max_prefill_seq_len=max_prefill_seq_len or default_config.max_prefill_seq_len,
+            max_decode_cache_seq=max_decode_cache_seq or default_config.max_decode_cache_seq,
+        )
         sessions = OrtSessionFactory(
             paths=onnx_paths or OnnxModelPaths(),
             graph_optimization_level=graph_optimization_level,
@@ -251,8 +267,13 @@ class VoxCPM2OnnxPipeline:
         )
 
         prefill_outputs = self.sessions.prefill.run(PREFILL_OUTPUTS, sequence)
+        prefill_state = dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True))
+        self._validate_decode_cache_capacity(
+            prefill_state,
+            max_decode_steps=effective_max_steps + self.config.decode_chunk_size,
+        )
         state = self._init_fixed_capacity_decode_state(
-            dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True)),
+            prefill_state,
             max_decode_steps=effective_max_steps + self.config.decode_chunk_size,
         )
         rng = np.random.default_rng(seed)
@@ -321,6 +342,11 @@ class VoxCPM2OnnxPipeline:
         # graph emits patch features, so host code performs the reversible layout
         # transform before the final ONNX decoder call.
         decoder_latent = np.transpose(feature_seq, (0, 3, 1, 2)).reshape(1, self.config.feat_dim, -1)
+        if decoder_latent.shape[-1] > self.config.max_decoder_latent_steps:
+            raise ValueError(
+                f"decoder latent length {decoder_latent.shape[-1]} exceeds production bound "
+                f"{self.config.max_decoder_latent_steps}; re-export with a larger --max-latent-steps"
+            )
         sr_cond = np.array([self.config.decode_sample_rate], dtype=np.int32)
         waveform = self.sessions.audio_decoder.run(["waveform"], {"latent": decoder_latent, "sr_cond": sr_cond})[0]
         return SynthesisResult(
@@ -550,6 +576,7 @@ class VoxCPM2OnnxPipeline:
             text_mask = np.ones(text_len, dtype=np.float32)
             audio_mask = np.zeros(text_len, dtype=np.float32)
 
+        self._validate_prefill_sequence_length(tokens.shape[0])
         return {
             "text_tokens": tokens[None, :].astype(np.int64, copy=False),
             "text_mask": text_mask[None, :].astype(np.float32, copy=False),
@@ -596,6 +623,11 @@ class VoxCPM2OnnxPipeline:
         if remainder:
             pad = patch_len - remainder
             mono = np.pad(mono, (pad, 0) if padding_mode == "left" else (0, pad))
+        if mono.shape[0] > self.config.max_audio_encoder_samples:
+            raise ValueError(
+                f"encoded audio has {mono.shape[0]} samples after padding, exceeding production bound "
+                f"{self.config.max_audio_encoder_samples}; trim audio or re-export with a larger --max-samples"
+            )
         waveform = mono.reshape(1, 1, -1).astype(np.float32, copy=False)
         latent = self.sessions.audio_encoder.run(["latent"], {"waveform": waveform})[0][0]
         return (
@@ -634,5 +666,27 @@ class VoxCPM2OnnxPipeline:
                 audio_chunk_size=int(np.prod(audio_vae_config.get("encoder_rates", [2, 5, 8, 8]))),
                 decode_chunk_size=self.config.decode_chunk_size,
                 decode_safety_max_steps=self.config.decode_safety_max_steps,
+                max_audio_encoder_samples=self.config.max_audio_encoder_samples,
+                max_decoder_latent_steps=self.config.max_decoder_latent_steps,
+                max_prefill_seq_len=self.config.max_prefill_seq_len,
+                max_decode_cache_seq=self.config.max_decode_cache_seq,
             ),
         )
+
+    def _validate_prefill_sequence_length(self, seq_len: int) -> None:
+        if seq_len > self.config.max_prefill_seq_len:
+            raise ValueError(
+                f"prefill sequence length {seq_len} exceeds production bound {self.config.max_prefill_seq_len}; "
+                "shorten text/reference/prompt inputs or re-export with a larger --max-seq-len"
+            )
+
+    def _validate_decode_cache_capacity(self, prefill_state: dict[str, np.ndarray], *, max_decode_steps: int) -> None:
+        base_capacity = int(prefill_state["base_cache_length"][0]) + max_decode_steps
+        residual_capacity = int(prefill_state["residual_cache_length"][0]) + max_decode_steps
+        required_capacity = max(base_capacity, residual_capacity)
+        if required_capacity > self.config.max_decode_cache_seq:
+            raise ValueError(
+                f"decode cache capacity {required_capacity} exceeds production bound "
+                f"{self.config.max_decode_cache_seq}; lower --max-steps or re-export with a larger "
+                "--max-cache-seq-bound"
+            )

@@ -84,6 +84,26 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value passed to decode.")
     parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for host-supplied diffusion noise.")
     parser.add_argument(
+        "--max-audio-encoder-samples",
+        type=int,
+        help="Runtime bound matching the AudioVAEEncoder export shape profile.",
+    )
+    parser.add_argument(
+        "--max-decoder-latent-steps",
+        type=int,
+        help="Runtime bound matching the AudioVAEDecoder export shape profile.",
+    )
+    parser.add_argument(
+        "--max-prefill-seq-len",
+        type=int,
+        help="Runtime bound matching the Prefill export shape profile.",
+    )
+    parser.add_argument(
+        "--max-decode-cache-seq",
+        type=int,
+        help="Runtime bound matching the DecodeChunk export shape profile.",
+    )
+    parser.add_argument(
         "--ort-graph-optimization",
         choices=graph_optimization_choices,
         default="disable",
@@ -136,6 +156,10 @@ def main() -> int:
         log_severity_level=args.ort_log_severity,
         intra_op_num_threads=args.ort_intra_op_threads,
         inter_op_num_threads=args.ort_inter_op_threads,
+        max_audio_encoder_samples=args.max_audio_encoder_samples,
+        max_decoder_latent_steps=args.max_decoder_latent_steps,
+        max_prefill_seq_len=args.max_prefill_seq_len,
+        max_decode_cache_seq=args.max_decode_cache_seq,
     )
     pipeline.validate()
     result = pipeline.synthesize_with_metadata(

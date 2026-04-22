@@ -50,6 +50,18 @@ External data files must remain next to their `.onnx` files.
 
 The shared source of truth for module names, paths, input/output contracts, precision profiles, and shape reports is `src/export/common.py`.
 
+## Shape Profiles
+
+Production exports default to `--shape-profile production`. This profile is shared by FP32 and BF16:
+
+- static `batch=1`
+- bounded dynamic Prefill sequence: `--max-seq-len 1024`
+- bounded dynamic DecodeChunk cache: `--max-cache-seq-bound 6144`
+- bounded dynamic AudioVAE encoder samples: `--max-samples 960000`
+- bounded dynamic AudioVAE decoder latent steps: `--max-latent-steps 16384`
+
+These are export contracts, not model-math changes. Runtime validates the same limits before calling ONNX so oversized inputs fail with a clear error. Use `--shape-profile flex` only for internal/debug exports that need the older broad dynamic behavior.
+
 ## 🚀 One-Command Export
 
 ```mermaid
@@ -77,6 +89,13 @@ Export production BF16:
 
 ```bash
 python -B src/export/export_all.py --precision bf16
+```
+
+Export both precision families with larger production bounds:
+
+```bash
+python -B src/export/export_all.py --precision fp32 --max-seq-len 1536 --max-cache-seq-bound 7680
+python -B src/export/export_all.py --precision bf16 --max-seq-len 1536 --max-cache-seq-bound 7680
 ```
 
 Equivalent console script after editable install:

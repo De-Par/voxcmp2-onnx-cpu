@@ -200,6 +200,10 @@ def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> B
         log_severity_level=args.onnx_log_severity,
         intra_op_num_threads=args.onnx_intra_op_threads,
         inter_op_num_threads=args.onnx_inter_op_threads,
+        max_audio_encoder_samples=args.max_audio_encoder_samples,
+        max_decoder_latent_steps=args.max_decoder_latent_steps,
+        max_prefill_seq_len=args.max_prefill_seq_len,
+        max_decode_cache_seq=args.max_decode_cache_seq,
     )
     pipeline.validate()
     if args.onnx_preload_sessions:
@@ -576,6 +580,12 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         help="ONNX Runtime inter-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
     )
+    parser.add_argument(
+        "--max-audio-encoder-samples", type=int, help="Runtime/export bound for reference audio samples."
+    )
+    parser.add_argument("--max-decoder-latent-steps", type=int, help="Runtime/export bound for decoder latent steps.")
+    parser.add_argument("--max-prefill-seq-len", type=int, help="Runtime/export bound for prefill sequence length.")
+    parser.add_argument("--max-decode-cache-seq", type=int, help="Runtime/export bound for decode cache capacity.")
 
     parser.add_argument("--orig-device", default="cpu", help="Device passed to official VoxCPM.from_pretrained.")
     parser.add_argument(

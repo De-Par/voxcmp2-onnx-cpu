@@ -10,6 +10,7 @@ from src.export.common import (
     PRECISION_CHOICES,
     default_output_path,
     get_precision_profile,
+    get_shape_profile,
 )
 
 
@@ -38,6 +39,22 @@ def test_default_paths_are_precision_scoped() -> None:
         for module_key, layout in MODULE_OUTPUT_LAYOUTS.items():
             path = default_output_path(module_key, precision)
             assert path.parts[-4:] == ("onnx", precision_name, layout.directory, layout.filename)
+
+
+def test_production_shape_profile_specializes_runtime_safe_axes() -> None:
+    production = get_shape_profile("production")
+    flex = get_shape_profile("flex")
+
+    assert production.static_batch is True
+    assert production.batch_size == 1
+    assert production.max_prefill_seq is not None
+    assert production.max_decode_cache_seq is not None
+    assert production.max_audio_samples is not None
+    assert production.max_decoder_latent_steps is not None
+
+    assert flex.static_batch is False
+    assert flex.max_prefill_seq is None
+    assert flex.max_decode_cache_seq is None
 
 
 def test_exporter_constants_match_shared_contracts() -> None:

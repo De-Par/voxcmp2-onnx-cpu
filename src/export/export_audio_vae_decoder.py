@@ -16,6 +16,8 @@ try:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        add_shape_profile_argument,
+        bounded_dim,
         cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
@@ -23,12 +25,16 @@ try:
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
+        resolve_shape_profile,
+        validate_static_batch,
     )
 except ImportError:
     from common import (  # type: ignore[no-redef]
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        add_shape_profile_argument,
+        bounded_dim,
         cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
@@ -36,6 +42,8 @@ except ImportError:
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
+        resolve_shape_profile,
+        validate_static_batch,
     )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -109,33 +117,45 @@ def _load_audio_vae(model_dir: Path, precision: PrecisionProfile | None = None) 
     return audio_vae
 
 
-def _dynamic_shapes() -> dict[str, dict[int, Any]]:
-    batch = torch.export.Dim("batch", min=1)
-    latent_steps = torch.export.Dim("latent_steps", min=1)
+def _dynamic_shapes(shape_profile) -> dict[str, dict[int, Any]]:
+    latent_axes: dict[int, Any] = {
+        2: bounded_dim("latent_steps", maximum=shape_profile.max_decoder_latent_steps),
+    }
+    sr_cond_axes: dict[int, Any] = {}
+    if not shape_profile.static_batch:
+        batch = bounded_dim("batch")
+        latent_axes[0] = batch
+        sr_cond_axes[0] = batch
     return {
-        "latent": {0: batch, 2: latent_steps},
-        "sr_cond": {0: batch},
+        "latent": latent_axes,
+        "sr_cond": sr_cond_axes,
     }
 
 
-def _shape_report(batch_size: int, latent_steps: int) -> dict[str, Any]:
+def _shape_report(batch_size: int, latent_steps: int, shape_profile) -> dict[str, Any]:
+    batch_dim = f"static:{batch_size}" if shape_profile.static_batch else "dynamic:batch"
+    latent_steps_dim = (
+        f"dynamic:latent_steps<={shape_profile.max_decoder_latent_steps}"
+        if shape_profile.max_decoder_latent_steps is not None
+        else "dynamic:latent_steps"
+    )
     return {
         "inputs": {
             "latent": {
                 "dtype": "float32",
-                "dims": ["dynamic:batch", "static:64", "dynamic:latent_steps"],
+                "dims": [batch_dim, "static:64", latent_steps_dim],
                 "example_shape": [batch_size, 64, latent_steps],
             },
             "sr_cond": {
                 "dtype": "int32",
-                "dims": ["dynamic:batch"],
+                "dims": [batch_dim],
                 "example_shape": [batch_size],
             },
         },
         "outputs": {
             "waveform": {
                 "dtype": "float32",
-                "dims": ["dynamic:batch", "static:1", "dynamic:samples"],
+                "dims": [batch_dim, "static:1", "dynamic:samples"],
             }
         },
     }
@@ -143,12 +163,19 @@ def _shape_report(batch_size: int, latent_steps: int) -> dict[str, Any]:
 
 def export_audio_vae_decoder(args: argparse.Namespace) -> None:
     precision = get_precision_profile(args.precision)
+    shape_profile = resolve_shape_profile(args)
+    validate_static_batch(args.batch_size, shape_profile)
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
     output_path = resolve_output_path(args.output, MODULE_KEY, precision)
     ensure_output_dir(output_path)
 
     audio_vae = _load_audio_vae(model_dir, precision)
     wrapper = AudioVAEDecoderWrapper(audio_vae, precision).eval()
+    if (
+        shape_profile.max_decoder_latent_steps is not None
+        and args.latent_steps > shape_profile.max_decoder_latent_steps
+    ):
+        raise ValueError("--latent-steps must be <= --max-latent-steps for the selected shape profile")
 
     latent = torch.randn(
         args.batch_size,
@@ -163,8 +190,9 @@ def export_audio_vae_decoder(args: argparse.Namespace) -> None:
         precision=precision,
         input_names=INPUT_NAMES,
         output_names=OUTPUT_NAMES,
-        shape_report=_shape_report(args.batch_size, args.latent_steps),
+        shape_report=_shape_report(args.batch_size, args.latent_steps, shape_profile),
         output_path=output_path,
+        shape_profile=shape_profile,
     )
     export_onnx_graph(
         wrapper=wrapper,
@@ -173,7 +201,7 @@ def export_audio_vae_decoder(args: argparse.Namespace) -> None:
         input_names=INPUT_NAMES,
         output_names=OUTPUT_NAMES,
         opset=args.opset,
-        dynamic_shapes=_dynamic_shapes(),
+        dynamic_shapes=_dynamic_shapes(shape_profile),
     )
 
     print(f"exported={output_path}")
@@ -195,8 +223,14 @@ def _parser() -> argparse.ArgumentParser:
         help="ONNX output path. Defaults to models/onnx/<precision>/audio_vae_decoder/audio_vae_decoder.onnx.",
     )
     add_precision_argument(parser)
+    add_shape_profile_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument("--latent-steps", type=int, default=4, help="Example latent time steps used during export.")
+    parser.add_argument(
+        "--max-latent-steps",
+        type=int,
+        help="Production upper bound for decoder latent time steps. Defaults to the selected shape profile.",
+    )
     parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
     parser.add_argument(
         "--local-files-only", action="store_true", default=True, help="Require local Hugging Face cache/model files."

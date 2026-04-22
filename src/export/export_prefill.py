@@ -16,6 +16,8 @@ try:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        add_shape_profile_argument,
+        bounded_dim,
         cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
@@ -23,12 +25,16 @@ try:
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
+        resolve_shape_profile,
+        validate_static_batch,
     )
 except ImportError:
     from common import (  # type: ignore[no-redef]
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        add_shape_profile_argument,
+        bounded_dim,
         cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
@@ -36,6 +42,8 @@ except ImportError:
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
+        resolve_shape_profile,
+        validate_static_batch,
     )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -245,75 +253,79 @@ def make_synthetic_prefill_inputs(
     }
 
 
-def _dynamic_shapes() -> dict[str, dict[int, Any]]:
-    batch = torch.export.Dim("batch", min=1)
-    seq = torch.export.Dim("seq", min=1)
+def _dynamic_shapes(shape_profile) -> dict[str, dict[int, Any]]:
+    seq = bounded_dim("seq", maximum=shape_profile.max_prefill_seq)
+    batch_axes = {} if shape_profile.static_batch else {0: bounded_dim("batch")}
     return {
-        "text_tokens": {0: batch, 1: seq},
-        "text_mask": {0: batch, 1: seq},
-        "audio_features": {0: batch, 1: seq},
-        "audio_mask": {0: batch, 1: seq},
+        "text_tokens": {**batch_axes, 1: seq},
+        "text_mask": {**batch_axes, 1: seq},
+        "audio_features": {**batch_axes, 1: seq},
+        "audio_mask": {**batch_axes, 1: seq},
     }
 
 
-def _shape_report(model: torch.nn.Module, batch_size: int, seq_len: int, mode: str) -> dict[str, Any]:
+def _shape_report(model: torch.nn.Module, batch_size: int, seq_len: int, mode: str, shape_profile) -> dict[str, Any]:
     lm_config = model.config.lm_config
     head_dim = lm_config.kv_channels or (lm_config.hidden_size // lm_config.num_attention_heads)
+    batch_dim = f"static:{batch_size}" if shape_profile.static_batch else "dynamic:batch"
+    seq_dim = (
+        f"dynamic:seq<={shape_profile.max_prefill_seq}" if shape_profile.max_prefill_seq is not None else "dynamic:seq"
+    )
     return {
         "mode": mode,
         "inputs": {
             "text_tokens": {
                 "dtype": "int64",
-                "dims": ["dynamic:batch", "dynamic:seq"],
+                "dims": [batch_dim, seq_dim],
                 "example_shape": [batch_size, seq_len],
             },
             "text_mask": {
                 "dtype": "float32",
-                "dims": ["dynamic:batch", "dynamic:seq"],
+                "dims": [batch_dim, seq_dim],
                 "example_shape": [batch_size, seq_len],
             },
             "audio_features": {
                 "dtype": "float32",
-                "dims": ["dynamic:batch", "dynamic:seq", f"static:{model.patch_size}", f"static:{model.feat_dim}"],
+                "dims": [batch_dim, seq_dim, f"static:{model.patch_size}", f"static:{model.feat_dim}"],
                 "example_shape": [batch_size, seq_len, model.patch_size, model.feat_dim],
             },
             "audio_mask": {
                 "dtype": "float32",
-                "dims": ["dynamic:batch", "dynamic:seq"],
+                "dims": [batch_dim, seq_dim],
                 "example_shape": [batch_size, seq_len],
             },
         },
         "outputs": {
-            "lm_hidden": ["dynamic:batch", f"static:{lm_config.hidden_size}"],
-            "residual_hidden": ["dynamic:batch", f"static:{lm_config.hidden_size}"],
-            "prefix_feat_cond": ["dynamic:batch", f"static:{model.patch_size}", f"static:{model.feat_dim}"],
+            "lm_hidden": [batch_dim, f"static:{lm_config.hidden_size}"],
+            "residual_hidden": [batch_dim, f"static:{lm_config.hidden_size}"],
+            "prefix_feat_cond": [batch_dim, f"static:{model.patch_size}", f"static:{model.feat_dim}"],
             "base_k_cache": [
                 f"static:{lm_config.num_hidden_layers}",
-                "dynamic:batch",
+                batch_dim,
                 f"static:{lm_config.num_key_value_heads}",
-                "dynamic:seq",
+                seq_dim,
                 f"static:{head_dim}",
             ],
             "base_v_cache": [
                 f"static:{lm_config.num_hidden_layers}",
-                "dynamic:batch",
+                batch_dim,
                 f"static:{lm_config.num_key_value_heads}",
-                "dynamic:seq",
+                seq_dim,
                 f"static:{head_dim}",
             ],
             "base_cache_length": ["static:1"],
             "residual_k_cache": [
                 f"static:{model.config.residual_lm_num_layers}",
-                "dynamic:batch",
+                batch_dim,
                 f"static:{lm_config.num_key_value_heads}",
-                "dynamic:seq",
+                seq_dim,
                 f"static:{head_dim}",
             ],
             "residual_v_cache": [
                 f"static:{model.config.residual_lm_num_layers}",
-                "dynamic:batch",
+                batch_dim,
                 f"static:{lm_config.num_key_value_heads}",
-                "dynamic:seq",
+                seq_dim,
                 f"static:{head_dim}",
             ],
             "residual_cache_length": ["static:1"],
@@ -324,6 +336,10 @@ def _shape_report(model: torch.nn.Module, batch_size: int, seq_len: int, mode: s
 def export_prefill(args: argparse.Namespace) -> None:
     _resolve_model_path = _decoder_helpers()
     precision = get_precision_profile(args.precision)
+    shape_profile = resolve_shape_profile(args)
+    validate_static_batch(args.batch_size, shape_profile)
+    if shape_profile.max_prefill_seq is not None and args.seq_len > shape_profile.max_prefill_seq:
+        raise ValueError("--seq-len must be <= --max-seq-len for the selected shape profile")
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
     output_path = resolve_output_path(args.output, MODULE_KEY, precision)
     ensure_output_dir(output_path)
@@ -347,8 +363,9 @@ def export_prefill(args: argparse.Namespace) -> None:
         precision=precision,
         input_names=INPUT_NAMES,
         output_names=OUTPUT_NAMES,
-        shape_report=_shape_report(model, args.batch_size, args.seq_len, args.mode),
+        shape_report=_shape_report(model, args.batch_size, args.seq_len, args.mode, shape_profile),
         output_path=output_path,
+        shape_profile=shape_profile,
     )
     export_onnx_graph(
         wrapper=wrapper,
@@ -357,7 +374,7 @@ def export_prefill(args: argparse.Namespace) -> None:
         input_names=INPUT_NAMES,
         output_names=OUTPUT_NAMES,
         opset=args.opset,
-        dynamic_shapes=_dynamic_shapes(),
+        dynamic_shapes=_dynamic_shapes(shape_profile),
     )
 
     print(f"exported={output_path}")
@@ -379,9 +396,15 @@ def _parser() -> argparse.ArgumentParser:
         help="ONNX output path. Defaults to models/onnx/<precision>/prefill/voxcpm2_prefill.onnx.",
     )
     add_precision_argument(parser)
+    add_shape_profile_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument(
         "--seq-len", type=int, default=16, help="Example full prompt sequence length used during export."
+    )
+    parser.add_argument(
+        "--max-seq-len",
+        type=int,
+        help="Production upper bound for text/reference/prompt sequence length. Defaults to the shape profile.",
     )
     parser.add_argument(
         "--mode",

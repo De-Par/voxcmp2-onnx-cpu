@@ -14,12 +14,16 @@ try:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        add_shape_profile_argument,
+        bounded_dim,
         cast_tensor_if_needed,
         ensure_output_dir,
         export_onnx_graph,
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
+        resolve_shape_profile,
+        validate_static_batch,
     )
     from .export_decode_step import (
         VoxCPM2DecodeStepWrapper,
@@ -32,12 +36,16 @@ except ImportError:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        add_shape_profile_argument,
+        bounded_dim,
         cast_tensor_if_needed,
         ensure_output_dir,
         export_onnx_graph,
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
+        resolve_shape_profile,
+        validate_static_batch,
     )
     from export_decode_step import (  # type: ignore[no-redef]
         VoxCPM2DecodeStepWrapper,
@@ -215,8 +223,8 @@ def make_synthetic_decode_chunk_inputs(
     return inputs
 
 
-def _dynamic_shapes() -> dict[str, dict[int, Any]]:
-    max_cache_seq = torch.export.Dim("max_cache_seq", min=2)
+def _dynamic_shapes(shape_profile) -> dict[str, dict[int, Any]]:
+    max_cache_seq = bounded_dim("max_cache_seq", minimum=2, maximum=shape_profile.max_decode_cache_seq)
     return {
         "lm_hidden": {},
         "residual_hidden": {},
@@ -239,8 +247,14 @@ def _shape_report(
     max_cache_seq: int,
     chunk_size: int,
     inference_timesteps: int,
+    shape_profile,
 ) -> dict[str, Any]:
     dims = _model_dims(model)
+    cache_dim = (
+        f"dynamic:max_cache_seq<={shape_profile.max_decode_cache_seq}"
+        if shape_profile.max_decode_cache_seq is not None
+        else "dynamic:max_cache_seq"
+    )
     return {
         "chunk_size": chunk_size,
         "inference_timesteps": inference_timesteps,
@@ -252,14 +266,14 @@ def _shape_report(
                 f"static:{dims['base_layers']}",
                 "static:batch",
                 f"static:{dims['kv_heads']}",
-                "dynamic:max_cache_seq",
+                cache_dim,
                 f"static:{dims['head_dim']}",
             ],
             "base_v_cache": [
                 f"static:{dims['base_layers']}",
                 "static:batch",
                 f"static:{dims['kv_heads']}",
-                "dynamic:max_cache_seq",
+                cache_dim,
                 f"static:{dims['head_dim']}",
             ],
             "base_current_length": ["static:1"],
@@ -267,14 +281,14 @@ def _shape_report(
                 f"static:{dims['residual_layers']}",
                 "static:batch",
                 f"static:{dims['kv_heads']}",
-                "dynamic:max_cache_seq",
+                cache_dim,
                 f"static:{dims['head_dim']}",
             ],
             "residual_v_cache": [
                 f"static:{dims['residual_layers']}",
                 "static:batch",
                 f"static:{dims['kv_heads']}",
-                "dynamic:max_cache_seq",
+                cache_dim,
                 f"static:{dims['head_dim']}",
             ],
             "residual_current_length": ["static:1"],
@@ -325,6 +339,10 @@ def _shape_report(
 def export_decode_chunk(args: argparse.Namespace) -> None:
     _resolve_model_path, load_voxcpm2_prefill_model = _export_helpers()
     precision = get_precision_profile(args.precision)
+    shape_profile = resolve_shape_profile(args)
+    validate_static_batch(args.batch_size, shape_profile)
+    if shape_profile.max_decode_cache_seq is not None and args.max_cache_seq > shape_profile.max_decode_cache_seq:
+        raise ValueError("--max-cache-seq must be <= --max-cache-seq-bound for the selected shape profile")
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
     output_path = resolve_output_path(args.output, MODULE_KEY, precision)
     ensure_output_dir(output_path)
@@ -359,8 +377,10 @@ def export_decode_chunk(args: argparse.Namespace) -> None:
             args.max_cache_seq,
             args.chunk_size,
             args.inference_timesteps,
+            shape_profile,
         ),
         output_path=output_path,
+        shape_profile=shape_profile,
     )
     export_onnx_graph(
         wrapper=wrapper,
@@ -369,7 +389,7 @@ def export_decode_chunk(args: argparse.Namespace) -> None:
         input_names=INPUT_NAMES,
         output_names=OUTPUT_NAMES,
         opset=args.opset,
-        dynamic_shapes=_dynamic_shapes(),
+        dynamic_shapes=_dynamic_shapes(shape_profile),
     )
 
     print(f"exported={output_path}")
@@ -394,6 +414,7 @@ def _parser() -> argparse.ArgumentParser:
         help="ONNX output path. Defaults to models/onnx/<precision>/decode_chunk/voxcpm2_decode_chunk.onnx.",
     )
     add_precision_argument(parser)
+    add_shape_profile_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE, help="Decode steps per ONNX session.run.")
     parser.add_argument(
@@ -404,6 +425,11 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=64,
         help="Example fixed KV-cache capacity; must be at least --current-length + --chunk-size.",
+    )
+    parser.add_argument(
+        "--max-cache-seq-bound",
+        type=int,
+        help="Production upper bound for decode cache capacity. Defaults to the selected shape profile.",
     )
     parser.add_argument(
         "--inference-timesteps",

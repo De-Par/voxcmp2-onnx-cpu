@@ -199,6 +199,27 @@ Export production BF16:
 python -B src/export/export_all.py --precision bf16
 ```
 
+Production exports use the shared `production` shape profile for both precision families:
+
+| bound | default |
+|---|---:|
+| batch | `1` static |
+| prefill sequence | `1024` tokens/audio positions |
+| decode cache capacity | `6144` positions |
+| AudioVAE encoder samples | `960000` padded samples |
+| AudioVAE decoder latent steps | `16384` |
+
+Use the same flags for FP32 and BF16 if you need larger production bounds:
+
+```bash
+python -B src/export/export_all.py \
+  --precision fp32 \
+  --max-seq-len 1536 \
+  --max-cache-seq-bound 7680
+```
+
+When runtime bounds differ from defaults, pass matching CLI bounds at synthesis/benchmark time. This keeps one runtime implementation while making shape limits explicit.
+
 Expected output layout:
 
 ```text
@@ -296,6 +317,16 @@ python -B src/cli/synthesize.py \
 ```
 
 Clone modes require `--reference-wav`. Ultimate clone also requires `--prompt-wav` and `--prompt-text`. Parameter `--max-steps 0` is the default and means "run until `stop_logits` ends the stream" with an internal safety cap. `--max-steps 1 --min-steps 0` is only for graph-load smoke checks and writes intentionally truncated audio.
+
+If you exported larger shape bounds, pass matching runtime bounds:
+
+```bash
+python -B src/cli/synthesize.py \
+  --text "Hello from VoxCPM2." \
+  --output artifacts/samples/text_only.wav \
+  --max-prefill-seq-len 1536 \
+  --max-decode-cache-seq 7680
+```
 
 
 ## 📊 Benchmark And Profile

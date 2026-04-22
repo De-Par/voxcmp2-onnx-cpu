@@ -22,6 +22,7 @@ All options keep `CPUExecutionProvider` only.
 | log severity | `verbose`, `info`, `warning`, `error`, `fatal` |
 | intra-op threads | integer or ORT default |
 | inter-op threads | integer or ORT default |
+| shape bounds | must match the exported production shape profile |
 
 Default runtime settings remain conservative for parity/debug work:
 
@@ -34,6 +35,12 @@ inter_op_num_threads=default
 ```
 
 The benchmark CLI preloads selected ONNX sessions during the load phase by default. Use `--no-onnx-preload-sessions` only when measuring first-request latency.
+
+If ONNX artifacts were exported with non-default shape bounds, pass the same runtime bounds to benchmark/profile commands:
+
+```bash
+--max-prefill-seq-len 1536 --max-decode-cache-seq 7680
+```
 
 ## ⚡ Quick Variant Benchmark
 

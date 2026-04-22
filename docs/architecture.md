@@ -160,6 +160,20 @@ Purpose: generated latent feature sequence to waveform.
 
 For non-streaming v1, host concatenates generated features and calls the decoder once.
 
+## Production Shape Policy
+
+The production export profile specializes shapes that are already fixed by the CPU-only runtime while keeping real text/reference/prompt lengths dynamic within documented bounds.
+
+| Axis | Production policy | Rationale |
+|---|---:|---|
+| batch | static `1` | The v1 synthesis pipeline is single-request and indexes one waveform result. |
+| Prefill `seq` | dynamic, bounded to `1024` by default | Text, reference audio, and prompt audio vary per request but should fail early if they exceed the exported contract. |
+| Decode cache `max_cache_seq` | dynamic, bounded to `6144` by default | The host owns fixed-capacity cache allocation; the bound covers default auto decode plus typical prompt/reference inputs. |
+| AudioVAE encoder samples | dynamic, bounded to `960000` padded samples | Reference/prompt WAV length remains variable but bounded. |
+| AudioVAE decoder latent steps | dynamic, bounded to `16384` | Covers the default decode safety cap with `patch_size=4`. |
+
+The same shape profile applies to FP32 and BF16. If a deployment needs longer prompts or decode limits, re-export both precision profiles with larger bounds and pass matching runtime bounds. This changes the shape contract, not the runtime implementation.
+
 ## 🗃️ Fixed-Capacity Decode Cache
 
 The old experimental decode-step contract grew cache tensors every step:

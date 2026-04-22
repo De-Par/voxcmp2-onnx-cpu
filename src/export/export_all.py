@@ -7,13 +7,23 @@ import argparse
 from pathlib import Path
 
 try:
-    from .common import add_precision_argument, get_precision_profile, output_path_under_root
+    from .common import (
+        add_precision_argument,
+        add_shape_profile_argument,
+        get_precision_profile,
+        output_path_under_root,
+    )
     from .export_audio_vae_decoder import export_audio_vae_decoder
     from .export_audio_vae_encoder import export_audio_vae_encoder
     from .export_decode_chunk import export_decode_chunk
     from .export_prefill import export_prefill
 except ImportError:
-    from common import add_precision_argument, get_precision_profile, output_path_under_root  # type: ignore[no-redef]
+    from common import (  # type: ignore[no-redef]
+        add_precision_argument,
+        add_shape_profile_argument,
+        get_precision_profile,
+        output_path_under_root,
+    )
     from export_audio_vae_decoder import export_audio_vae_decoder  # type: ignore[no-redef]
     from export_audio_vae_encoder import export_audio_vae_encoder  # type: ignore[no-redef]
     from export_decode_chunk import export_decode_chunk  # type: ignore[no-redef]
@@ -37,6 +47,7 @@ def export_all(args: argparse.Namespace) -> None:
         "batch_size": args.batch_size,
         "opset": args.opset,
         "precision": precision.name,
+        "shape_profile": args.shape_profile,
     }
 
     export_audio_vae_encoder(
@@ -44,6 +55,7 @@ def export_all(args: argparse.Namespace) -> None:
             **common,
             output=_module_output(args.output_root, "audio_vae_encoder", precision.name),
             samples=args.samples,
+            max_samples=args.max_samples,
         )
     )
     export_audio_vae_decoder(
@@ -51,6 +63,7 @@ def export_all(args: argparse.Namespace) -> None:
             **common,
             output=_module_output(args.output_root, "audio_vae_decoder", precision.name),
             latent_steps=args.latent_steps,
+            max_latent_steps=args.max_latent_steps,
         )
     )
     export_prefill(
@@ -61,6 +74,7 @@ def export_all(args: argparse.Namespace) -> None:
             mode=args.mode,
             reference_steps=args.reference_steps,
             prompt_steps=args.prompt_steps,
+            max_seq_len=args.max_seq_len,
             seed=args.seed,
         )
     )
@@ -71,6 +85,7 @@ def export_all(args: argparse.Namespace) -> None:
             chunk_size=args.chunk_size,
             current_length=args.current_length,
             max_cache_seq=args.max_cache_seq,
+            max_cache_seq_bound=args.max_cache_seq_bound,
             inference_timesteps=args.inference_timesteps,
             cfg_value=args.cfg_value,
             seed=args.seed,
@@ -94,10 +109,26 @@ def _parser() -> argparse.ArgumentParser:
         help="Root directory that receives <precision>/<module>/<file>.onnx outputs.",
     )
     add_precision_argument(parser)
+    add_shape_profile_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument("--samples", type=int, default=20480, help="AudioVAE encoder example padded samples.")
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        help="Production upper bound for dynamic waveform samples. Defaults to the selected shape profile.",
+    )
     parser.add_argument("--latent-steps", type=int, default=4, help="AudioVAE decoder example latent steps.")
+    parser.add_argument(
+        "--max-latent-steps",
+        type=int,
+        help="Production upper bound for decoder latent steps. Defaults to the selected shape profile.",
+    )
     parser.add_argument("--seq-len", type=int, default=16, help="Prefill example full prompt sequence length.")
+    parser.add_argument(
+        "--max-seq-len",
+        type=int,
+        help="Production upper bound for prompt/reference sequence length. Defaults to the selected shape profile.",
+    )
     parser.add_argument(
         "--mode",
         choices=["plain_tts", "voice_design", "controllable_clone", "ultimate_clone"],
@@ -113,6 +144,11 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=64,
         help="Decode-chunk example fixed KV-cache capacity; must be at least --current-length + --chunk-size.",
+    )
+    parser.add_argument(
+        "--max-cache-seq-bound",
+        type=int,
+        help="Production upper bound for decode cache capacity. Defaults to the selected shape profile.",
     )
     parser.add_argument(
         "--inference-timesteps",

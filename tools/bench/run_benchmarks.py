@@ -210,6 +210,10 @@ def _load_onnx(args: argparse.Namespace) -> LoadedVariant:
         log_severity_level=args.onnx_log_severity,
         intra_op_num_threads=args.onnx_intra_op_threads,
         inter_op_num_threads=args.onnx_inter_op_threads,
+        max_audio_encoder_samples=args.max_audio_encoder_samples,
+        max_decoder_latent_steps=args.max_decoder_latent_steps,
+        max_prefill_seq_len=args.max_prefill_seq_len,
+        max_decode_cache_seq=args.max_decode_cache_seq,
     )
     pipeline.validate()
     if args.onnx_preload_sessions:
@@ -603,6 +607,10 @@ def _make_report(
                 "preload_sessions": args.onnx_preload_sessions,
                 "intra_op_threads": args.onnx_intra_op_threads,
                 "inter_op_threads": args.onnx_inter_op_threads,
+                "max_audio_encoder_samples": args.max_audio_encoder_samples,
+                "max_decoder_latent_steps": args.max_decoder_latent_steps,
+                "max_prefill_seq_len": args.max_prefill_seq_len,
+                "max_decode_cache_seq": args.max_decode_cache_seq,
             },
             "official": {
                 "device": args.official_device,
@@ -839,6 +847,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--onnx-intra-op-threads", type=int, help="ORT intra-op threads. Omit for default.")
     parser.add_argument("--onnx-inter-op-threads", type=int, help="ORT inter-op threads. Omit for default.")
+    parser.add_argument(
+        "--max-audio-encoder-samples", type=int, help="Runtime/export bound for reference audio samples."
+    )
+    parser.add_argument("--max-decoder-latent-steps", type=int, help="Runtime/export bound for decoder latent steps.")
+    parser.add_argument("--max-prefill-seq-len", type=int, help="Runtime/export bound for prefill sequence length.")
+    parser.add_argument("--max-decode-cache-seq", type=int, help="Runtime/export bound for decode cache capacity.")
     parser.add_argument("--audio-encoder-onnx", type=Path, help="Override AudioVAEEncoder ONNX path.")
     parser.add_argument("--audio-decoder-onnx", type=Path, help="Override AudioVAEDecoder ONNX path.")
     parser.add_argument("--prefill-onnx", type=Path, help="Override VoxCPM2Prefill ONNX path.")
