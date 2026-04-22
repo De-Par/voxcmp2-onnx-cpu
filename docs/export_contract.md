@@ -27,7 +27,7 @@ The repository currently provides export scripts for:
 - `VoxCPM2Prefill`
 - `VoxCPM2DecodeStep`
 
-Each script logs input names, output names, dtypes, and dynamic/static dimensions. A formal machine-readable export manifest is still a release-candidate requirement; until then, `src/runtime/session_factory.py` uses explicit default paths and the docs define the contract.
+Each script logs input names, output names, dtypes, and dynamic/static dimensions. `src/export/common.py` is the shared source for precision profiles, public module contracts, and default artifact layout. A formal machine-readable export manifest is still a release-candidate requirement; until then, `src/runtime/session_factory.py` uses explicit default paths and the docs define the contract.
 
 ## Required V1 Modes
 
@@ -98,10 +98,17 @@ Production BF16 export reports must include:
 ## Reproduce
 
 ```bash
-python -B src/export/export_audio_vae_encoder.py --output models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
-python -B src/export/export_audio_vae_decoder.py --output models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
-python -B src/export/export_prefill.py --output models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/export/export_decode_step.py --output models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16
+python -B src/export/export_all.py --precision fp32
+python -B src/export/export_all.py --precision bf16
+```
+
+Module-level exports are also available:
+
+```bash
+python -B src/export/export_audio_vae_encoder.py --precision fp32
+python -B src/export/export_audio_vae_decoder.py --precision fp32
+python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
+python -B src/export/export_decode_step.py --precision fp32 --cache-seq 16
 ```
 
 ## Non-Goals

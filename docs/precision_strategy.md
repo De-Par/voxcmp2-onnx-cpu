@@ -37,6 +37,8 @@ Both families must contain the same module set:
 
 Both families must preserve the same module boundaries. Do not merge modules into one monolithic ONNX graph to solve precision or performance issues.
 
+The concrete export profile registry lives in `src/export/common.py`. `src/export/export_all.py` applies one profile across all four module exporters so FP32 and BF16 artifacts are produced by the same pipeline.
+
 ## Common Graph Policy
 
 FP32 and BF16 artifacts must use a common graph structure by contract:

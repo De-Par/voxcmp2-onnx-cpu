@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast checks for configurable CPU ONNX Runtime session options."""
+"""Fast checks for configurable CPU ONNX Runtime session options"""
 
 from __future__ import annotations
 

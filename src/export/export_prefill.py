@@ -11,6 +11,31 @@ from typing import Any, Literal
 
 import torch
 
+try:
+    from .common import (
+        MODULE_EXPORT_CONTRACTS,
+        PrecisionProfile,
+        add_precision_argument,
+        configure_module_precision,
+        ensure_output_dir,
+        export_onnx_graph,
+        get_precision_profile,
+        print_export_plan,
+        resolve_output_path,
+    )
+except ImportError:
+    from common import (  # type: ignore[no-redef]
+        MODULE_EXPORT_CONTRACTS,
+        PrecisionProfile,
+        add_precision_argument,
+        configure_module_precision,
+        ensure_output_dir,
+        export_onnx_graph,
+        get_precision_profile,
+        print_export_plan,
+        resolve_output_path,
+    )
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -28,18 +53,9 @@ def _decoder_helpers():
     return _resolve_model_path
 
 
-INPUT_NAMES = ["text_tokens", "text_mask", "audio_features", "audio_mask"]
-OUTPUT_NAMES = [
-    "lm_hidden",
-    "residual_hidden",
-    "prefix_feat_cond",
-    "base_k_cache",
-    "base_v_cache",
-    "base_cache_length",
-    "residual_k_cache",
-    "residual_v_cache",
-    "residual_cache_length",
-]
+MODULE_KEY = "prefill"
+INPUT_NAMES = list(MODULE_EXPORT_CONTRACTS[MODULE_KEY].input_names)
+OUTPUT_NAMES = list(MODULE_EXPORT_CONTRACTS[MODULE_KEY].output_names)
 
 PrefillMode = Literal["plain_tts", "voice_design", "controllable_clone", "ultimate_clone"]
 
@@ -52,9 +68,12 @@ class VoxCPM2PrefillWrapper(torch.nn.Module):
     the non-iterative neural section at the start of ``VoxCPM2Model._inference``.
     """
 
-    def __init__(self, model: torch.nn.Module) -> None:
+    def __init__(self, model: torch.nn.Module, precision: PrecisionProfile | None = None) -> None:
         super().__init__()
         self.model = model
+        self.precision = precision or get_precision_profile("fp32")
+        self.compute_dtype = self.precision.torch_compute_dtype()
+        self.host_float_dtype = self.precision.torch_host_float_dtype()
 
     @staticmethod
     def _stack_cache(cache_tuple: list[tuple[torch.Tensor, torch.Tensor]]) -> tuple[torch.Tensor, torch.Tensor]:
@@ -74,9 +93,9 @@ class VoxCPM2PrefillWrapper(torch.nn.Module):
         # already handled tokenization, language text, reference/prompt audio
         # alignment, and masks before this wrapper is called.
         text_tokens = text_tokens.to(dtype=torch.long)
-        text_mask = text_mask.to(dtype=torch.float32)
-        audio_features = audio_features.to(dtype=torch.float32)
-        audio_mask = audio_mask.to(dtype=torch.float32)
+        text_mask = text_mask.to(dtype=self.compute_dtype)
+        audio_features = audio_features.to(dtype=self.compute_dtype)
+        audio_mask = audio_mask.to(dtype=self.compute_dtype)
 
         prefill_encoder = getattr(model, "_feat_encoder_raw", model.feat_encoder)
         feat_embed = prefill_encoder(audio_features)
@@ -114,14 +133,14 @@ class VoxCPM2PrefillWrapper(torch.nn.Module):
         residual_cache_length = cache_length.clone()
 
         return (
-            lm_hidden,
-            residual_hidden,
-            prefix_feat_cond,
-            base_k_cache,
-            base_v_cache,
+            lm_hidden.to(dtype=self.host_float_dtype),
+            residual_hidden.to(dtype=self.host_float_dtype),
+            prefix_feat_cond.to(dtype=self.host_float_dtype),
+            base_k_cache.to(dtype=self.host_float_dtype),
+            base_v_cache.to(dtype=self.host_float_dtype),
             cache_length,
-            residual_k_cache,
-            residual_v_cache,
+            residual_k_cache.to(dtype=self.host_float_dtype),
+            residual_v_cache.to(dtype=self.host_float_dtype),
             residual_cache_length,
         )
 
@@ -133,16 +152,17 @@ def _install_upstream_import_path() -> None:
     sys.path.insert(0, str(upstream_src))
 
 
-def load_voxcpm2_prefill_model(model_dir: Path) -> torch.nn.Module:
+def load_voxcpm2_prefill_model(model_dir: Path, precision: PrecisionProfile | None = None) -> torch.nn.Module:
     _install_upstream_import_path()
+    precision = precision or get_precision_profile("fp32")
 
     from voxcpm.model.voxcpm2 import VoxCPM2Model
 
     model = VoxCPM2Model.from_local(str(model_dir), optimize=False, device="cpu")
-    model = model.to(device="cpu", dtype=torch.float32).eval()
-    model.config.dtype = "float32"
+    model = configure_module_precision(model, precision)
+    model.config.dtype = precision.model_config_dtype
     print(f"loaded_voxcpm2={model_dir}")
-    print("device=cpu dtype=float32")
+    print(f"device=cpu precision={precision.name} compute_dtype={precision.compute_dtype}")
     print(f"patch_size={model.patch_size} feat_dim={model.feat_dim}")
     print(
         "lm_config="
@@ -301,12 +321,13 @@ def _shape_report(model: torch.nn.Module, batch_size: int, seq_len: int, mode: s
 
 def export_prefill(args: argparse.Namespace) -> None:
     _resolve_model_path = _decoder_helpers()
+    precision = get_precision_profile(args.precision)
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
-    output_path = args.output.expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = resolve_output_path(args.output, MODULE_KEY, precision)
+    ensure_output_dir(output_path)
 
-    model = load_voxcpm2_prefill_model(model_dir)
-    wrapper = VoxCPM2PrefillWrapper(model).eval()
+    model = load_voxcpm2_prefill_model(model_dir, precision)
+    wrapper = VoxCPM2PrefillWrapper(model, precision).eval()
     inputs = make_synthetic_prefill_inputs(
         batch_size=args.batch_size,
         seq_len=args.seq_len,
@@ -319,27 +340,23 @@ def export_prefill(args: argparse.Namespace) -> None:
         prompt_steps=args.prompt_steps,
     )
 
-    report = _shape_report(model, args.batch_size, args.seq_len, args.mode)
-    print("input_names=" + ",".join(INPUT_NAMES))
-    print("output_names=" + ",".join(OUTPUT_NAMES))
-    print("shape_report=" + json.dumps(report, sort_keys=True))
-    print(f"output_path={output_path}")
-
-    with torch.inference_mode():
-        torch.onnx.export(
-            wrapper,
-            args=tuple(inputs[name] for name in INPUT_NAMES),
-            f=str(output_path),
-            input_names=INPUT_NAMES,
-            output_names=OUTPUT_NAMES,
-            opset_version=args.opset,
-            dynamo=True,
-            external_data=True,
-            dynamic_shapes=_dynamic_shapes(),
-            optimize=False,
-            do_constant_folding=False,
-            verify=False,
-        )
+    print_export_plan(
+        module_key=MODULE_KEY,
+        precision=precision,
+        input_names=INPUT_NAMES,
+        output_names=OUTPUT_NAMES,
+        shape_report=_shape_report(model, args.batch_size, args.seq_len, args.mode),
+        output_path=output_path,
+    )
+    export_onnx_graph(
+        wrapper=wrapper,
+        inputs=tuple(inputs[name] for name in INPUT_NAMES),
+        output_path=output_path,
+        input_names=INPUT_NAMES,
+        output_names=OUTPUT_NAMES,
+        opset=args.opset,
+        dynamic_shapes=_dynamic_shapes(),
+    )
 
     print(f"exported={output_path}")
 
@@ -350,7 +367,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_prefill.py "
-            "--output models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts"
+            "--precision fp32 --mode plain_tts"
         ),
     )
     parser.add_argument(
@@ -359,9 +376,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("models/onnx/fp32/prefill/voxcpm2_prefill.onnx"),
-        help="ONNX output path.",
+        default=None,
+        help="ONNX output path. Defaults to models/onnx/<precision>/prefill/voxcpm2_prefill.onnx.",
     )
+    add_precision_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument(
         "--seq-len", type=int, default=16, help="Example full prompt sequence length used during export."

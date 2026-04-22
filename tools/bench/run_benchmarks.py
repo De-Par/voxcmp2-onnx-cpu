@@ -122,7 +122,7 @@ def _mode_text(case: BenchmarkCase) -> str:
 
 
 def _make_reference_wav(path: Path) -> Path:
-    """Create a deterministic small reference WAV for controllable-clone cases."""
+    """Create a deterministic small reference WAV for controllable-clone cases"""
     path.parent.mkdir(parents=True, exist_ok=True)
     sample_rate = 16_000
     seconds = 2.0

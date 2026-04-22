@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse ONNX Runtime Chrome-trace profiles into ranked hotspot reports."""
+"""Parse ONNX Runtime Chrome-trace profiles into ranked hotspot reports"""
 
 from __future__ import annotations
 

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 from pathlib import Path
@@ -12,6 +11,29 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+
+try:
+    from .common import (
+        MODULE_EXPORT_CONTRACTS,
+        PrecisionProfile,
+        add_precision_argument,
+        ensure_output_dir,
+        export_onnx_graph,
+        get_precision_profile,
+        print_export_plan,
+        resolve_output_path,
+    )
+except ImportError:
+    from common import (  # type: ignore[no-redef]
+        MODULE_EXPORT_CONTRACTS,
+        PrecisionProfile,
+        add_precision_argument,
+        ensure_output_dir,
+        export_onnx_graph,
+        get_precision_profile,
+        print_export_plan,
+        resolve_output_path,
+    )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,33 +53,9 @@ def _export_helpers():
     return _resolve_model_path, load_voxcpm2_prefill_model
 
 
-INPUT_NAMES = [
-    "lm_hidden",
-    "residual_hidden",
-    "prefix_feat_cond",
-    "base_k_cache",
-    "base_v_cache",
-    "base_cache_length",
-    "residual_k_cache",
-    "residual_v_cache",
-    "residual_cache_length",
-    "diffusion_noise",
-    "cfg_value",
-]
-OUTPUT_NAMES = [
-    "pred_audio_feature",
-    "decoder_latent",
-    "stop_logits",
-    "next_lm_hidden",
-    "next_residual_hidden",
-    "next_prefix_feat_cond",
-    "next_base_k_cache",
-    "next_base_v_cache",
-    "next_base_cache_length",
-    "next_residual_k_cache",
-    "next_residual_v_cache",
-    "next_residual_cache_length",
-]
+MODULE_KEY = "decode_step"
+INPUT_NAMES = list(MODULE_EXPORT_CONTRACTS[MODULE_KEY].input_names)
+OUTPUT_NAMES = list(MODULE_EXPORT_CONTRACTS[MODULE_KEY].output_names)
 
 
 def _rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -74,6 +72,8 @@ def _apply_rotary_pos_emb(
     orig_dtype = q.dtype
     q = q.to(torch.float32)
     k = k.to(torch.float32)
+    cos = cos.to(torch.float32)
+    sin = sin.to(torch.float32)
     q_embed = (q * cos) + (_rotate_half(q) * sin)
     k_embed = (k * cos) + (_rotate_half(k) * sin)
     return q_embed.to(orig_dtype), k_embed.to(orig_dtype)
@@ -88,10 +88,18 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
     tensors, so the host code owns the autoregressive loop.
     """
 
-    def __init__(self, model: torch.nn.Module, inference_timesteps: int = 10) -> None:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        inference_timesteps: int = 10,
+        precision: PrecisionProfile | None = None,
+    ) -> None:
         super().__init__()
         self.model = model
         self.inference_timesteps = inference_timesteps
+        self.precision = precision or get_precision_profile("fp32")
+        self.compute_dtype = self.precision.torch_compute_dtype()
+        self.host_float_dtype = self.precision.torch_host_float_dtype()
         t_span = torch.linspace(1, 0, inference_timesteps + 1, dtype=torch.float32)
         t_span = t_span + (torch.cos(torch.pi / 2 * t_span) - 1 + t_span)
         self.register_buffer("t_span", t_span, persistent=False)
@@ -200,18 +208,17 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         cfg_value: torch.Tensor,
     ) -> tuple[torch.Tensor, ...]:
         model = self.model
-        # All neural math remains in FP32 for the first CPU-only correctness
-        # target. Host code supplies diffusion_noise so the ONNX graph is
-        # deterministic and parity-testable.
-        lm_hidden = lm_hidden.to(dtype=torch.float32)
-        residual_hidden = residual_hidden.to(dtype=torch.float32)
-        prefix_feat_cond = prefix_feat_cond.to(dtype=torch.float32)
-        base_k_cache = base_k_cache.to(dtype=torch.float32)
-        base_v_cache = base_v_cache.to(dtype=torch.float32)
-        residual_k_cache = residual_k_cache.to(dtype=torch.float32)
-        residual_v_cache = residual_v_cache.to(dtype=torch.float32)
-        diffusion_noise = diffusion_noise.to(dtype=torch.float32)
-        cfg_value = cfg_value.to(dtype=torch.float32)
+        # Host code supplies FP32 tensors for both production profiles. The
+        # wrapper localizes profile-specific compute dtype at the graph edge.
+        lm_hidden = lm_hidden.to(dtype=self.compute_dtype)
+        residual_hidden = residual_hidden.to(dtype=self.compute_dtype)
+        prefix_feat_cond = prefix_feat_cond.to(dtype=self.compute_dtype)
+        base_k_cache = base_k_cache.to(dtype=self.compute_dtype)
+        base_v_cache = base_v_cache.to(dtype=self.compute_dtype)
+        residual_k_cache = residual_k_cache.to(dtype=self.compute_dtype)
+        residual_v_cache = residual_v_cache.to(dtype=self.compute_dtype)
+        diffusion_noise = diffusion_noise.to(dtype=self.compute_dtype)
+        cfg_value = cfg_value.to(dtype=self.compute_dtype)
 
         dit_hidden_1 = model.lm_to_dit_proj(lm_hidden)
         dit_hidden_2 = model.res_to_dit_proj(residual_hidden)
@@ -256,17 +263,17 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         )
 
         return (
-            pred_audio_feature,
-            decoder_latent,
-            stop_logits,
-            next_lm_hidden,
-            next_residual_hidden,
-            pred_feat,
-            next_base_k_cache,
-            next_base_v_cache,
+            pred_audio_feature.to(dtype=self.host_float_dtype),
+            decoder_latent.to(dtype=self.host_float_dtype),
+            stop_logits.to(dtype=self.host_float_dtype),
+            next_lm_hidden.to(dtype=self.host_float_dtype),
+            next_residual_hidden.to(dtype=self.host_float_dtype),
+            pred_feat.to(dtype=self.host_float_dtype),
+            next_base_k_cache.to(dtype=self.host_float_dtype),
+            next_base_v_cache.to(dtype=self.host_float_dtype),
             next_base_cache_length,
-            next_residual_k_cache,
-            next_residual_v_cache,
+            next_residual_k_cache.to(dtype=self.host_float_dtype),
+            next_residual_v_cache.to(dtype=self.host_float_dtype),
             next_residual_cache_length,
         )
 
@@ -453,12 +460,13 @@ def _shape_report(model: torch.nn.Module, batch_size: int, cache_seq: int, infer
 
 def export_decode_step(args: argparse.Namespace) -> None:
     _resolve_model_path, load_voxcpm2_prefill_model = _export_helpers()
+    precision = get_precision_profile(args.precision)
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
-    output_path = args.output.expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = resolve_output_path(args.output, MODULE_KEY, precision)
+    ensure_output_dir(output_path)
 
-    model = load_voxcpm2_prefill_model(model_dir)
-    wrapper = VoxCPM2DecodeStepWrapper(model, inference_timesteps=args.inference_timesteps).eval()
+    model = load_voxcpm2_prefill_model(model_dir, precision)
+    wrapper = VoxCPM2DecodeStepWrapper(model, inference_timesteps=args.inference_timesteps, precision=precision).eval()
     dims = _model_dims(model)
     inputs = make_synthetic_decode_step_inputs(
         batch_size=args.batch_size,
@@ -468,29 +476,23 @@ def export_decode_step(args: argparse.Namespace) -> None:
         **dims,
     )
 
-    print("input_names=" + ",".join(INPUT_NAMES))
-    print("output_names=" + ",".join(OUTPUT_NAMES))
-    print(
-        "shape_report="
-        + json.dumps(_shape_report(model, args.batch_size, args.cache_seq, args.inference_timesteps), sort_keys=True)
+    print_export_plan(
+        module_key=MODULE_KEY,
+        precision=precision,
+        input_names=INPUT_NAMES,
+        output_names=OUTPUT_NAMES,
+        shape_report=_shape_report(model, args.batch_size, args.cache_seq, args.inference_timesteps),
+        output_path=output_path,
     )
-    print(f"output_path={output_path}")
-
-    with torch.inference_mode():
-        torch.onnx.export(
-            wrapper,
-            args=tuple(inputs[name] for name in INPUT_NAMES),
-            f=str(output_path),
-            input_names=INPUT_NAMES,
-            output_names=OUTPUT_NAMES,
-            opset_version=args.opset,
-            dynamo=True,
-            external_data=True,
-            dynamic_shapes=_dynamic_shapes(),
-            optimize=False,
-            do_constant_folding=False,
-            verify=False,
-        )
+    export_onnx_graph(
+        wrapper=wrapper,
+        inputs=tuple(inputs[name] for name in INPUT_NAMES),
+        output_path=output_path,
+        input_names=INPUT_NAMES,
+        output_names=OUTPUT_NAMES,
+        opset=args.opset,
+        dynamic_shapes=_dynamic_shapes(),
+    )
 
     print(f"exported={output_path}")
 
@@ -501,7 +503,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_decode_step.py "
-            "--output models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
+            "--precision fp32 --cache-seq 16"
         ),
     )
     parser.add_argument(
@@ -510,9 +512,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx"),
-        help="ONNX output path.",
+        default=None,
+        help="ONNX output path. Defaults to models/onnx/<precision>/decode_step/voxcpm2_decode_step.onnx.",
     )
+    add_precision_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument(
         "--cache-seq", type=int, default=16, help="Example valid KV-cache length entering the decode step."

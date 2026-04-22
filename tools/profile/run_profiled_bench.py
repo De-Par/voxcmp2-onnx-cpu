@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a small ONNX synthesis benchmark with ORT profiling enabled."""
+"""Run a small ONNX synthesis benchmark with ORT profiling enabled"""
 
 from __future__ import annotations
 

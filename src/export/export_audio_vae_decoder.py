@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,23 +11,53 @@ from typing import Any
 import torch
 from huggingface_hub import snapshot_download
 
+try:
+    from .common import (
+        MODULE_EXPORT_CONTRACTS,
+        PrecisionProfile,
+        add_precision_argument,
+        configure_module_precision,
+        ensure_output_dir,
+        export_onnx_graph,
+        get_precision_profile,
+        print_export_plan,
+        resolve_output_path,
+    )
+except ImportError:
+    from common import (  # type: ignore[no-redef]
+        MODULE_EXPORT_CONTRACTS,
+        PrecisionProfile,
+        add_precision_argument,
+        configure_module_precision,
+        ensure_output_dir,
+        export_onnx_graph,
+        get_precision_profile,
+        print_export_plan,
+        resolve_output_path,
+    )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM_SRC = REPO_ROOT / "third_party" / "VoxCPM" / "src"
 
-INPUT_NAMES = ["latent", "sr_cond"]
-OUTPUT_NAMES = ["waveform"]
+MODULE_KEY = "audio_vae_decoder"
+INPUT_NAMES = list(MODULE_EXPORT_CONTRACTS[MODULE_KEY].input_names)
+OUTPUT_NAMES = list(MODULE_EXPORT_CONTRACTS[MODULE_KEY].output_names)
 
 
 class AudioVAEDecoderWrapper(torch.nn.Module):
     """ONNX-facing wrapper with an explicit forward signature"""
 
-    def __init__(self, audio_vae: torch.nn.Module) -> None:
+    def __init__(self, audio_vae: torch.nn.Module, precision: PrecisionProfile | None = None) -> None:
         super().__init__()
         self.audio_vae = audio_vae
+        self.precision = precision or get_precision_profile("fp32")
+        self.compute_dtype = self.precision.torch_compute_dtype()
+        self.host_float_dtype = self.precision.torch_host_float_dtype()
 
     def forward(self, latent: torch.Tensor, sr_cond: torch.Tensor) -> torch.Tensor:
-        return self.audio_vae.decode(latent, sr_cond)
+        latent = latent.to(dtype=self.compute_dtype)
+        waveform = self.audio_vae.decode(latent, sr_cond)
+        return waveform.to(dtype=self.host_float_dtype)
 
 
 def _install_upstream_import_path() -> None:
@@ -44,8 +73,9 @@ def _resolve_model_path(model_path: str, local_files_only: bool) -> Path:
     return Path(snapshot_download(model_path, local_files_only=local_files_only))
 
 
-def _load_audio_vae(model_dir: Path) -> torch.nn.Module:
+def _load_audio_vae(model_dir: Path, precision: PrecisionProfile | None = None) -> torch.nn.Module:
     _install_upstream_import_path()
+    precision = precision or get_precision_profile("fp32")
 
     from voxcpm.model.voxcpm2 import SAFETENSORS_AVAILABLE, VoxCPMConfig
     from voxcpm.modules.audiovae import AudioVAEV2
@@ -69,8 +99,9 @@ def _load_audio_vae(model_dir: Path) -> torch.nn.Module:
         raise FileNotFoundError(f"AudioVAE checkpoint not found in {model_dir}")
 
     audio_vae.load_state_dict(state_dict, strict=True)
-    audio_vae = audio_vae.to(device="cpu", dtype=torch.float32).eval()
+    audio_vae = configure_module_precision(audio_vae, precision)
     print(f"loaded_audio_vae={source}")
+    print(f"device=cpu precision={precision.name} compute_dtype={precision.compute_dtype}")
     print(f"sample_rate={audio_vae.sample_rate} out_sample_rate={audio_vae.out_sample_rate}")
     print(f"latent_dim={audio_vae.latent_dim} decode_chunk_size={audio_vae.decode_chunk_size}")
     return audio_vae
@@ -109,37 +140,39 @@ def _shape_report(batch_size: int, latent_steps: int) -> dict[str, Any]:
 
 
 def export_audio_vae_decoder(args: argparse.Namespace) -> None:
+    precision = get_precision_profile(args.precision)
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
-    output_path = args.output.expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = resolve_output_path(args.output, MODULE_KEY, precision)
+    ensure_output_dir(output_path)
 
-    audio_vae = _load_audio_vae(model_dir)
-    wrapper = AudioVAEDecoderWrapper(audio_vae).eval()
+    audio_vae = _load_audio_vae(model_dir, precision)
+    wrapper = AudioVAEDecoderWrapper(audio_vae, precision).eval()
 
-    latent = torch.randn(args.batch_size, audio_vae.latent_dim, args.latent_steps, dtype=torch.float32)
+    latent = torch.randn(
+        args.batch_size,
+        audio_vae.latent_dim,
+        args.latent_steps,
+        dtype=precision.torch_host_float_dtype(),
+    )
     sr_cond = torch.full((args.batch_size,), int(audio_vae.out_sample_rate), dtype=torch.int32)
 
-    report = _shape_report(args.batch_size, args.latent_steps)
-    print("input_names=" + ",".join(INPUT_NAMES))
-    print("output_names=" + ",".join(OUTPUT_NAMES))
-    print("shape_report=" + json.dumps(report, sort_keys=True))
-    print(f"output_path={output_path}")
-
-    with torch.inference_mode():
-        torch.onnx.export(
-            wrapper,
-            args=(latent, sr_cond),
-            f=str(output_path),
-            input_names=INPUT_NAMES,
-            output_names=OUTPUT_NAMES,
-            opset_version=args.opset,
-            dynamo=True,
-            external_data=True,
-            dynamic_shapes=_dynamic_shapes(),
-            optimize=False,
-            do_constant_folding=False,
-            verify=False,
-        )
+    print_export_plan(
+        module_key=MODULE_KEY,
+        precision=precision,
+        input_names=INPUT_NAMES,
+        output_names=OUTPUT_NAMES,
+        shape_report=_shape_report(args.batch_size, args.latent_steps),
+        output_path=output_path,
+    )
+    export_onnx_graph(
+        wrapper=wrapper,
+        inputs=(latent, sr_cond),
+        output_path=output_path,
+        input_names=INPUT_NAMES,
+        output_names=OUTPUT_NAMES,
+        opset=args.opset,
+        dynamic_shapes=_dynamic_shapes(),
+    )
 
     print(f"exported={output_path}")
 
@@ -150,7 +183,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_audio_vae_decoder.py "
-            "--output models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx"
+            "--precision fp32"
         ),
     )
     parser.add_argument(
@@ -159,9 +192,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx"),
-        help="ONNX output path.",
+        default=None,
+        help="ONNX output path. Defaults to models/onnx/<precision>/audio_vae_decoder/audio_vae_decoder.onnx.",
     )
+    add_precision_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument("--latent-steps", type=int, default=4, help="Example latent time steps used during export.")
     parser.add_argument("--opset", type=int, default=18, help="ONNX opset version for torch.onnx.export.")
