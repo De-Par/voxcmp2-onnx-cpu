@@ -133,10 +133,10 @@ This split follows the traced execution without changing model behavior:
 Use the per-module runtime checkers after export:
 
 ```bash
-python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
-python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path artifacts/audio_vae_decoder/audio_vae_decoder.onnx
-python -B src/runtime/run_prefill_ort.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/runtime/run_decode_step_ort.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
+python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
+python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
 ```
 
 ## Non-Goals

@@ -96,6 +96,6 @@ Separate ONNX files for `VoxCPM2Prefill` and `VoxCPM2DecodeStep` will each conta
 ## Verification
 
 ```bash
-python -B src/runtime/run_decode_step_ort.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
-python -B tests/parity/test_decode_step.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
+python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
+python -B tests/parity/test_decode_step.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
 ```

@@ -60,7 +60,7 @@ Streaming is deferred to v2.
 
 ```bash
 python -B tests/smoke/test_cpu_only_runtime.py
-python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/runtime_sample.wav --mode text_only
+python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/samples/runtime_sample.wav --mode text_only
 ```
 
 The default `--max-steps 0` means the host decode-loop runs until ONNX `stop_logits` end the stream. The runtime still has an internal safety cap to avoid infinite loops if a decode-step export is invalid. `--max-steps 1 --min-steps 0` is valid only for graph-load smoke tests and produces intentionally truncated audio.

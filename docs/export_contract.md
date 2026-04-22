@@ -67,10 +67,10 @@ A stable export step must produce:
 ## Reproduce
 
 ```bash
-python -B src/export/export_audio_vae_encoder.py --output artifacts/audio_vae_encoder/audio_vae_encoder.onnx
-python -B src/export/export_audio_vae_decoder.py --output artifacts/audio_vae_decoder/audio_vae_decoder.onnx
-python -B src/export/export_prefill.py --output artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/export/export_decode_step.py --output artifacts/decode_step/voxcpm2_decode_step.onnx --cache-seq 16
+python -B src/export/export_audio_vae_encoder.py --output models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/export/export_audio_vae_decoder.py --output models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
+python -B src/export/export_prefill.py --output models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B src/export/export_decode_step.py --output models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16
 ```
 
 ## Non-Goals

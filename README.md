@@ -24,7 +24,16 @@ docs/            Contracts, boundary specs, blockers, platform notes
 REPORT.md        Trace-based call map and ONNX boundary rationale
 ```
 
-`artifacts/`, `traces/`, `.venv/`, and `third_party/` are intentionally ignored by git. ONNX files and downloaded weights are local build artifacts, not source files.
+Ignored local state is split by purpose:
+
+- `models/onnx/fp32/`: production FP32 ONNX exports and external data.
+- `models/onnx/bf16/`: experimental BF16-initializer ONNX copies.
+- `models/hf/`: optional local Hugging Face snapshots if you do not use the default cache.
+- `artifacts/`: reports, logs, benchmark WAV/JSON, and smoke output samples.
+- `traces/`: generate-path JSONL traces.
+- `.venv/` and `third_party/`: local environment and upstream checkout.
+
+ONNX files, external data, downloaded weights, traces, and generated reports are not source files and are intentionally ignored by git.
 
 ## Architecture
 
@@ -108,10 +117,10 @@ To force scripts to download missing files, pass `--allow-download` where availa
 Run exports in this order:
 
 ```bash
-python -B src/export/export_audio_vae_encoder.py --output artifacts/audio_vae_encoder/audio_vae_encoder.onnx
-python -B src/export/export_audio_vae_decoder.py --output artifacts/audio_vae_decoder/audio_vae_decoder.onnx
-python -B src/export/export_prefill.py --output artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/export/export_decode_step.py --output artifacts/decode_step/voxcpm2_decode_step.onnx --cache-seq 16
+python -B src/export/export_audio_vae_encoder.py --output models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/export/export_audio_vae_decoder.py --output models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
+python -B src/export/export_prefill.py --output models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B src/export/export_decode_step.py --output models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16
 ```
 
 All exports use:
@@ -129,10 +138,10 @@ Large ONNX external data files must remain next to their `.onnx` files.
 Run path-based ONNX checker and one CPU ORT invocation per module:
 
 ```bash
-python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
-python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path artifacts/audio_vae_decoder/audio_vae_decoder.onnx
-python -B src/runtime/run_prefill_ort.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/runtime/run_decode_step_ort.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
+python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
+python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
 ```
 
 Each checker prints input names, output names, dtype, dynamic/static dimensions, CPU provider list, and compact output statistics.
@@ -142,19 +151,19 @@ Each checker prints input names, output names, dtype, dynamic/static dimensions,
 Parity scripts compare the PyTorch export wrapper against ONNX Runtime CPU:
 
 ```bash
-python -B tests/parity/test_audio_vae_encoder.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
-python -B tests/parity/test_audio_vae_decoder.py --onnx-path artifacts/audio_vae_decoder/audio_vae_decoder.onnx
-python -B tests/parity/test_prefill.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx
-python -B tests/parity/test_decode_step.py --onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx
+python -B tests/parity/test_audio_vae_encoder.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+python -B tests/parity/test_audio_vae_decoder.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
+python -B tests/parity/test_prefill.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx
+python -B tests/parity/test_decode_step.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
 ```
 
 PyTest wrappers are also available through environment variables:
 
 ```bash
-VOXCPM2_AUDIO_VAE_ENCODER_ONNX=artifacts/audio_vae_encoder/audio_vae_encoder.onnx pytest tests/parity/test_audio_vae_encoder.py
-VOXCPM2_AUDIO_VAE_DECODER_ONNX=artifacts/audio_vae_decoder/audio_vae_decoder.onnx pytest tests/parity/test_audio_vae_decoder.py
-VOXCPM2_PREFILL_ONNX=artifacts/prefill/voxcpm2_prefill.onnx pytest tests/parity/test_prefill.py
-VOXCPM2_DECODE_STEP_ONNX=artifacts/decode_step/voxcpm2_decode_step.onnx pytest tests/parity/test_decode_step.py
+VOXCPM2_AUDIO_VAE_ENCODER_ONNX=models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx pytest tests/parity/test_audio_vae_encoder.py
+VOXCPM2_AUDIO_VAE_DECODER_ONNX=models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx pytest tests/parity/test_audio_vae_decoder.py
+VOXCPM2_PREFILL_ONNX=models/onnx/fp32/prefill/voxcpm2_prefill.onnx pytest tests/parity/test_prefill.py
+VOXCPM2_DECODE_STEP_ONNX=models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx pytest tests/parity/test_decode_step.py
 ```
 
 ## CPU-Only Runtime Smoke
@@ -185,7 +194,7 @@ The smoke test verifies:
 ```bash
 python -B src/cli/synthesize.py \
   --text "Hello from VoxCPM2." \
-  --output artifacts/runtime_sample.wav \
+  --output artifacts/samples/runtime_sample.wav \
   --mode text_only
 ```
 
@@ -196,7 +205,7 @@ python -B src/cli/synthesize.py \
   --mode voice_design \
   --voice-design "calm voice" \
   --text "Hello from VoxCPM2." \
-  --output artifacts/voice_design.wav
+  --output artifacts/samples/voice_design.wav
 ```
 
 For clone modes, provide `--reference-wav`, and for ultimate clone also provide `--prompt-wav` and `--prompt-text`.
@@ -227,7 +236,7 @@ The benchmark prints human-readable progress and saves JSON to `artifacts/bench/
 - `rms`
 - `decode_steps` / `stop_reason` for ONNX variants
 
-BF16 paths default to `artifacts/bf16_experiment/*`. Production FP32 defaults are not changed.
+BF16 paths default to `models/onnx/bf16/*`. Production FP32 defaults are not changed.
 
 ## Trace Official Generate Path
 
@@ -264,7 +273,7 @@ Before publishing a release candidate:
 ```bash
 python -B -m py_compile $(find src tests -name '*.py' -print)
 python -B tests/smoke/test_cpu_only_runtime.py
-python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/runtime_sample.wav --mode text_only
+python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/samples/runtime_sample.wav --mode text_only
 rg -n "import torch|from torch|soundfile|librosa|transformers" src/runtime src/cli tests/smoke
 git diff --check
 ```

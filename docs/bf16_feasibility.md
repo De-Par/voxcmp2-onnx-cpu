@@ -8,7 +8,7 @@ FP32 remains the production contract. BF16 work is allowed only as an experiment
 
 - `src/runtime/session_factory.py`
 - `src/runtime/pipeline.py`
-- default `artifacts/*/*.onnx` paths
+- default `models/onnx/fp32/*/*.onnx` paths
 - FP32 export scripts
 
 ## Experiment Utility
@@ -20,7 +20,7 @@ It can:
 - inspect ONNX initializer dtypes and logical initializer bytes
 - find `Cast` nodes and direct Cast-to-Cast chains
 - compare `.onnx` plus external-data file sizes before and after conversion
-- write experimental BF16-initializer model copies under `artifacts/bf16_experiment`
+- write experimental BF16-initializer model copies under `models/onnx/bf16`
 - optionally try loading converted copies with ONNX Runtime CPU
 
 The conversion mode is intentionally conservative: selected FLOAT initializers are stored as BFLOAT16, then explicit `Cast` nodes convert them back to FLOAT before graph use. That tests storage reduction and ORT CPU loader coverage. It does not claim BF16 compute speedup.
@@ -42,8 +42,8 @@ Create a small, separate partial-BF16 patch set for the AudioVAE modules:
 python -B src/experiments/bf16_feasibility.py \
   --mode convert \
   --models audio_vae_encoder audio_vae_decoder \
-  --output-dir artifacts/bf16_experiment \
-  --report-json artifacts/bf16_feasibility/audio_vae_partial_bf16_report.json \
+  --output-dir models/onnx/bf16 \
+  --report-json artifacts/reports/bf16_feasibility/audio_vae_partial_bf16_report.json \
   --check-ort
 ```
 
@@ -54,8 +54,8 @@ python -B src/experiments/bf16_feasibility.py \
   --mode convert \
   --models audio_vae_encoder audio_vae_decoder prefill decode_step \
   --include-large-models \
-  --output-dir artifacts/bf16_experiment \
-  --report-json artifacts/bf16_feasibility/full_bf16_report.json \
+  --output-dir models/onnx/bf16 \
+  --report-json artifacts/reports/bf16_feasibility/full_bf16_report.json \
   --check-ort
 ```
 
@@ -66,7 +66,7 @@ git switch -c experiment/partial-bf16
 python -B src/experiments/bf16_feasibility.py --mode convert --models audio_vae_encoder audio_vae_decoder --check-ort
 ```
 
-Do not point production runtime defaults at `artifacts/bf16_experiment`.
+Do not point production runtime defaults at `models/onnx/bf16`.
 
 ## Current Findings
 
@@ -86,14 +86,14 @@ The large prefill/decode-step graphs are the biggest storage opportunity, but th
 Experimental artifacts are copied under:
 
 ```text
-artifacts/bf16_experiment/audio_vae_encoder/audio_vae_encoder.onnx
-artifacts/bf16_experiment/audio_vae_encoder/audio_vae_encoder.onnx.data
-artifacts/bf16_experiment/audio_vae_decoder/audio_vae_decoder.onnx
-artifacts/bf16_experiment/audio_vae_decoder/audio_vae_decoder.onnx.data
-artifacts/bf16_experiment/prefill/voxcpm2_prefill.onnx
-artifacts/bf16_experiment/prefill/voxcpm2_prefill.onnx.data
-artifacts/bf16_experiment/decode_step/voxcpm2_decode_step.onnx
-artifacts/bf16_experiment/decode_step/voxcpm2_decode_step.onnx.data
+models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx
+models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx.data
+models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx
+models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx.data
+models/onnx/bf16/prefill/voxcpm2_prefill.onnx
+models/onnx/bf16/prefill/voxcpm2_prefill.onnx.data
+models/onnx/bf16/decode_step/voxcpm2_decode_step.onnx
+models/onnx/bf16/decode_step/voxcpm2_decode_step.onnx.data
 ```
 
 These files are ignored artifacts. They are not production defaults.
@@ -119,12 +119,12 @@ An end-to-end text-only sample using the copied BF16-initializer artifacts also 
 ```bash
 python -B src/cli/synthesize.py \
   --text "Hello from VoxCPM2." \
-  --output artifacts/bf16_experiment/runtime_sample.wav \
+  --output artifacts/samples/bf16_runtime_sample.wav \
   --mode text_only \
-  --audio-encoder-onnx artifacts/bf16_experiment/audio_vae_encoder/audio_vae_encoder.onnx \
-  --audio-decoder-onnx artifacts/bf16_experiment/audio_vae_decoder/audio_vae_decoder.onnx \
-  --prefill-onnx artifacts/bf16_experiment/prefill/voxcpm2_prefill.onnx \
-  --decode-step-onnx artifacts/bf16_experiment/decode_step/voxcpm2_decode_step.onnx
+  --audio-encoder-onnx models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx \
+  --audio-decoder-onnx models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx \
+  --prefill-onnx models/onnx/bf16/prefill/voxcpm2_prefill.onnx \
+  --decode-step-onnx models/onnx/bf16/decode_step/voxcpm2_decode_step.onnx
 ```
 
 ## Safety Assessment

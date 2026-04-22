@@ -67,6 +67,6 @@ Text normalization, tokenizer behavior, language handling, WAV loading/resamplin
 ## Verification
 
 ```bash
-python -B src/runtime/run_prefill_ort.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B tests/parity/test_prefill.py --onnx-path artifacts/prefill/voxcpm2_prefill.onnx
+python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B tests/parity/test_prefill.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx
 ```

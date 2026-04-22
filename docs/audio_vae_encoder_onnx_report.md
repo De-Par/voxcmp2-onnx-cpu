@@ -53,7 +53,7 @@ Observed smoke parity for `samples=20480`:
 ## Reproduce
 
 ```bash
-python -B src/export/export_audio_vae_encoder.py --output artifacts/audio_vae_encoder/audio_vae_encoder.onnx
-python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
-python -B tests/parity/test_audio_vae_encoder.py --onnx-path artifacts/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/export/export_audio_vae_encoder.py --output models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+python -B tests/parity/test_audio_vae_encoder.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 ```
