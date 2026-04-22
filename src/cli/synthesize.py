@@ -22,7 +22,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/cli/synthesize.py --text 'Hello from VoxCPM2.' "
-            "--output artifacts/runtime_smoke.wav --max-steps 1 --mode text_only"
+            "--output artifacts/runtime_sample.wav --mode text_only"
         ),
     )
     parser.add_argument("--text", required=True, help="Target text to synthesize.")
@@ -52,9 +52,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--decode-step-onnx", type=Path, default=defaults.decode_step, help="VoxCPM2DecodeStep ONNX file."
     )
-    parser.add_argument("--max-steps", type=int, default=1, help="Maximum host decode-loop iterations.")
     parser.add_argument(
-        "--min-steps", type=int, default=0, help="Minimum decode steps before stop logits may end synthesis."
+        "--max-steps",
+        type=int,
+        default=0,
+        help="Maximum host decode-loop iterations. 0 means run until stop logits with an internal safety cap.",
+    )
+    parser.add_argument(
+        "--min-steps", type=int, default=8, help="Minimum decode steps before stop logits may end synthesis."
     )
     parser.add_argument(
         "--cfg-value", type=float, default=2.0, help="Classifier-free guidance value passed to decode_step."
@@ -81,7 +86,7 @@ def main() -> int:
         onnx_paths=paths,
     )
     pipeline.validate()
-    waveform = pipeline.synthesize(
+    result = pipeline.synthesize_with_metadata(
         args.text,
         mode=args.mode,
         voice_design=args.voice_design,
@@ -93,6 +98,7 @@ def main() -> int:
         cfg_value=args.cfg_value,
         seed=args.seed,
     )
+    waveform = result.waveform
     pipeline.write_wav(args.output, waveform)
     print(
         json.dumps(
@@ -100,6 +106,8 @@ def main() -> int:
                 "output": str(args.output),
                 "sample_rate": pipeline.config.decode_sample_rate,
                 "samples": int(waveform.shape[0]),
+                "decode_steps": result.metadata.decode_steps,
+                "stop_reason": result.metadata.stop_reason,
                 "sessions": list(pipeline.sessions.created_session_names),
             },
             sort_keys=True,

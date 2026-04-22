@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -18,6 +19,7 @@ from src.runtime.session_factory import OnnxModelPaths, OrtSessionFactory
 
 
 Mode = Literal["text_only", "voice_design", "controllable_clone", "ultimate_clone"]
+StopReason = Literal["stop_logits", "max_steps", "safety_max_steps"]
 
 PREFILL_INPUTS = ["text_tokens", "text_mask", "audio_features", "audio_mask"]
 PREFILL_OUTPUTS = [
@@ -105,6 +107,22 @@ class VoxCPM2RuntimeConfig:
     encode_sample_rate: int = 16000
     decode_sample_rate: int = 48000
     audio_chunk_size: int = 640
+    decode_safety_max_steps: int = 4096
+
+
+@dataclass(frozen=True)
+class SynthesisMetadata:
+    decode_steps: int
+    stop_reason: StopReason
+    requested_max_steps: int
+    effective_max_steps: int
+    min_steps: int
+
+
+@dataclass(frozen=True)
+class SynthesisResult:
+    waveform: np.ndarray
+    metadata: SynthesisMetadata
 
 
 @dataclass
@@ -159,13 +177,50 @@ class VoxCPM2OnnxPipeline:
         reference_wav_path: str | Path | None = None,
         prompt_wav_path: str | Path | None = None,
         prompt_text: str | None = None,
-        max_steps: int = 1,
-        min_steps: int = 0,
+        max_steps: int = 0,
+        min_steps: int = 8,
         cfg_value: float = 2.0,
         seed: int = 0,
     ) -> np.ndarray:
-        if max_steps < 1:
-            raise ValueError("max_steps must be >= 1")
+        return self.synthesize_with_metadata(
+            text,
+            mode=mode,
+            voice_design=voice_design,
+            reference_wav_path=reference_wav_path,
+            prompt_wav_path=prompt_wav_path,
+            prompt_text=prompt_text,
+            max_steps=max_steps,
+            min_steps=min_steps,
+            cfg_value=cfg_value,
+            seed=seed,
+        ).waveform
+
+    def synthesize_with_metadata(
+        self,
+        text: str,
+        *,
+        mode: Mode = "text_only",
+        voice_design: str | None = None,
+        reference_wav_path: str | Path | None = None,
+        prompt_wav_path: str | Path | None = None,
+        prompt_text: str | None = None,
+        max_steps: int = 0,
+        min_steps: int = 8,
+        cfg_value: float = 2.0,
+        seed: int = 0,
+        progress_callback: Callable[[int, StopReason | None], None] | None = None,
+    ) -> SynthesisResult:
+        if max_steps < 0:
+            raise ValueError("max_steps must be >= 0; use 0 for auto-until-stop")
+        if min_steps < 0:
+            raise ValueError("min_steps must be >= 0")
+
+        # max_steps=0 is the production-friendly path: run until the model emits
+        # an end-of-audio stop logit. The safety cap prevents an infinite loop if
+        # an exported decode_step graph or state contract is broken.
+        effective_max_steps = self.config.decode_safety_max_steps if max_steps == 0 else max_steps
+        if effective_max_steps < 1:
+            raise ValueError("effective max decode steps must be >= 1")
         # Host code owns mode-specific sequence assembly. The prefill ONNX
         # graph receives only tensors, so text/reference/prompt policy remains
         # inspectable and testable outside the neural graph.
@@ -182,8 +237,9 @@ class VoxCPM2OnnxPipeline:
         state = dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True))
         rng = np.random.default_rng(seed)
         generated: list[np.ndarray] = []
+        stop_reason: StopReason | None = None
 
-        for step in range(max_steps):
+        for step_index in range(effective_max_steps):
             # One ONNX call equals one autoregressive decode step. KV cache
             # tensors are explicit inputs/outputs because ONNX Runtime cannot
             # mutate the official Python-side cache object.
@@ -206,7 +262,15 @@ class VoxCPM2OnnxPipeline:
                 zip(DECODE_OUTPUTS, self.sessions.decode_step.run(DECODE_OUTPUTS, decode_inputs), strict=True)
             )
             generated.append(outputs["pred_audio_feature"])
-            if step >= min_steps and int(np.argmax(outputs["stop_logits"], axis=-1)[0]) == 1:
+            completed_steps = step_index + 1
+            if completed_steps >= min_steps and int(np.argmax(outputs["stop_logits"], axis=-1)[0]) == 1:
+                stop_reason = "stop_logits"
+            elif completed_steps >= effective_max_steps:
+                stop_reason = "safety_max_steps" if max_steps == 0 else "max_steps"
+
+            if progress_callback is not None:
+                progress_callback(completed_steps, stop_reason)
+            if stop_reason is not None:
                 break
             state = {
                 "lm_hidden": outputs["next_lm_hidden"],
@@ -227,14 +291,24 @@ class VoxCPM2OnnxPipeline:
         decoder_latent = np.transpose(feature_seq, (0, 3, 1, 2)).reshape(1, self.config.feat_dim, -1)
         sr_cond = np.array([self.config.decode_sample_rate], dtype=np.int32)
         waveform = self.sessions.audio_decoder.run(["waveform"], {"latent": decoder_latent, "sr_cond": sr_cond})[0]
-        return waveform[0, 0].astype(np.float32, copy=False)
+        return SynthesisResult(
+            waveform=waveform[0, 0].astype(np.float32, copy=False),
+            metadata=SynthesisMetadata(
+                decode_steps=len(generated),
+                stop_reason=stop_reason or ("safety_max_steps" if max_steps == 0 else "max_steps"),
+                requested_max_steps=max_steps,
+                effective_max_steps=effective_max_steps,
+                min_steps=min_steps,
+            ),
+        )
 
     def write_wav(self, path: str | Path, waveform: np.ndarray) -> None:
         # WAV writing is intentionally host code, not ONNX. int16 output keeps
         # the CLI artifact widely readable across platforms.
         target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        clipped = np.clip(waveform, -1.0, 1.0)
+        clean = np.nan_to_num(waveform, nan=0.0, posinf=1.0, neginf=-1.0)
+        clipped = np.clip(clean, -1.0, 1.0)
         pcm16 = (clipped * np.iinfo(np.int16).max).astype(np.int16)
         wavfile.write(str(target), self.config.decode_sample_rate, pcm16)
 
