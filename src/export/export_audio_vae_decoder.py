@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export VoxCPM2 AudioVAE decoder to ONNX."""
+"""Export VoxCPM2 AudioVAE decoder to ONNX"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ OUTPUT_NAMES = ["waveform"]
 
 
 class AudioVAEDecoderWrapper(torch.nn.Module):
-    """ONNX-facing wrapper with an explicit forward signature."""
+    """ONNX-facing wrapper with an explicit forward signature"""
 
     def __init__(self, audio_vae: torch.nn.Module) -> None:
         super().__init__()
@@ -150,7 +150,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_audio_vae_decoder.py "
-            "--output artifacts/audio_vae_decoder/audio_vae_decoder.onnx"
+            "--output models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx"
         ),
     )
     parser.add_argument(
@@ -159,7 +159,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/audio_vae_decoder/audio_vae_decoder.onnx"),
+        default=Path("models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx"),
         help="ONNX output path.",
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")

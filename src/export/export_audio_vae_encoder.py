@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export VoxCPM2 AudioVAE encoder to ONNX."""
+"""Export VoxCPM2 AudioVAE encoder to ONNX"""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_audio_vae_encoder.py "
-            "--output artifacts/audio_vae_encoder/audio_vae_encoder.onnx --samples 20480"
+            "--output models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx --samples 20480"
         ),
     )
     parser.add_argument(
@@ -131,7 +131,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("artifacts/audio_vae_encoder/audio_vae_encoder.onnx"),
+        default=Path("models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx"),
         help="ONNX output path.",
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check and run the exported VoxCPM2 prefill module with ONNX Runtime CPU."""
+"""Check and run the exported VoxCPM2 prefill module with ONNX Runtime CPU"""
 
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/runtime/run_prefill_ort.py "
-            "--onnx-path artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts"
+            "--onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts"
         ),
     )
     parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_prefill.onnx.")

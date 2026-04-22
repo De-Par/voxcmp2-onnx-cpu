@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check and run the exported VoxCPM2 decode-step module with ONNX Runtime CPU."""
+"""Check and run the exported VoxCPM2 decode-step module with ONNX Runtime CPU"""
 
 from __future__ import annotations
 
@@ -136,7 +136,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/runtime/run_decode_step_ort.py "
-            "--onnx-path artifacts/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
+            "--onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
         ),
     )
     parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_decode_step.onnx.")

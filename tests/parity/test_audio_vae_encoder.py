@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parity check for VoxCPM2 AudioVAE encoder: PyTorch vs ONNX Runtime."""
+"""Parity check for VoxCPM2 AudioVAE encoder: PyTorch vs ONNX Runtime"""
 
 from __future__ import annotations
 

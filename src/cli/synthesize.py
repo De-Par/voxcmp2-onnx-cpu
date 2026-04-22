@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthesize speech with the CPU-only VoxCPM2 ONNX Runtime pipeline."""
+"""Synthesize speech with the CPU-only VoxCPM2 ONNX Runtime pipeline"""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/cli/synthesize.py --text 'Hello from VoxCPM2.' "
-            "--output artifacts/runtime_sample.wav --mode text_only"
+            "--output artifacts/samples/runtime_sample.wav --mode text_only"
         ),
     )
     parser.add_argument("--text", required=True, help="Target text to synthesize.")

@@ -31,10 +31,10 @@ SILENCE_PEAK_THRESHOLD = 1e-5
 
 
 BF16_MODEL_PATH_VALUES = {
-    "audio_encoder": REPO_ROOT / "artifacts" / "bf16_experiment" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
-    "audio_decoder": REPO_ROOT / "artifacts" / "bf16_experiment" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
-    "prefill": REPO_ROOT / "artifacts" / "bf16_experiment" / "prefill" / "voxcpm2_prefill.onnx",
-    "decode_step": REPO_ROOT / "artifacts" / "bf16_experiment" / "decode_step" / "voxcpm2_decode_step.onnx",
+    "audio_encoder": REPO_ROOT / "models" / "onnx" / "bf16" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
+    "audio_decoder": REPO_ROOT / "models" / "onnx" / "bf16" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
+    "prefill": REPO_ROOT / "models" / "onnx" / "bf16" / "prefill" / "voxcpm2_prefill.onnx",
+    "decode_step": REPO_ROOT / "models" / "onnx" / "bf16" / "decode_step" / "voxcpm2_decode_step.onnx",
 }
 
 

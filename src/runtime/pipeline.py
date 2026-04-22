@@ -1,4 +1,4 @@
-"""CPU-only VoxCPM2 ONNX Runtime synthesis pipeline."""
+"""CPU-only VoxCPM2 ONNX Runtime synthesis pipeline"""
 
 from __future__ import annotations
 

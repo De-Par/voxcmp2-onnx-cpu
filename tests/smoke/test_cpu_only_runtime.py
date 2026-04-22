@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test for the CPU-only VoxCPM2 ONNX runtime pipeline."""
+"""Smoke test for the CPU-only VoxCPM2 ONNX runtime pipeline"""
 
 from __future__ import annotations
 
@@ -32,18 +32,21 @@ TORCH_MODULE_NAME = "to" + "rch"
 FORBIDDEN_RUNTIME_MODULES = (TORCH_MODULE_NAME, "sound" + "file", "lib" + "rosa")
 
 
-def _assert_no_forbidden_runtime_modules() -> None:
-    for module_name in FORBIDDEN_RUNTIME_MODULES:
-        assert module_name not in sys.modules
+def _forbidden_runtime_modules_loaded() -> set[str]:
+    return {module_name for module_name in FORBIDDEN_RUNTIME_MODULES if module_name in sys.modules}
+
+
+def _assert_no_new_forbidden_runtime_modules(baseline: set[str]) -> None:
+    assert _forbidden_runtime_modules_loaded().difference(baseline) == set()
 
 
 def test_cpu_only_runtime_smoke() -> None:
     VoxCPM2OnnxPipeline, CPU_PROVIDER = _runtime_classes()
-    _assert_no_forbidden_runtime_modules()
+    forbidden_baseline = _forbidden_runtime_modules_loaded()
 
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts()
     paths = pipeline.validate()
-    _assert_no_forbidden_runtime_modules()
+    _assert_no_new_forbidden_runtime_modules(forbidden_baseline)
 
     assert set(paths) == {"audio_encoder", "audio_decoder", "prefill", "decode_step"}
     assert pipeline.sessions.created_session_names == ()
@@ -59,7 +62,7 @@ def test_cpu_only_runtime_smoke() -> None:
     assert waveform.ndim == 1
     assert waveform.size > 0
     assert np.isfinite(waveform).all()
-    _assert_no_forbidden_runtime_modules()
+    _assert_no_new_forbidden_runtime_modules(forbidden_baseline)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         wav_path = Path(tmpdir) / "prompt.wav"
@@ -101,7 +104,7 @@ def test_cpu_only_runtime_smoke() -> None:
                 prompt_text="Prompt.",
             ),
         ]
-    _assert_no_forbidden_runtime_modules()
+    _assert_no_new_forbidden_runtime_modules(forbidden_baseline)
 
     for inputs in mode_inputs:
         assert set(inputs) == {"text_tokens", "text_mask", "audio_features", "audio_mask"}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the VoxCPM2 prefill path to ONNX."""
+"""Export the VoxCPM2 prefill path to ONNX"""
 
 from __future__ import annotations
 
@@ -350,14 +350,17 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_prefill.py "
-            "--output artifacts/prefill/voxcpm2_prefill.onnx --mode plain_tts"
+            "--output models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts"
         ),
     )
     parser.add_argument(
         "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
     )
     parser.add_argument(
-        "--output", type=Path, default=Path("artifacts/prefill/voxcpm2_prefill.onnx"), help="ONNX output path."
+        "--output",
+        type=Path,
+        default=Path("models/onnx/fp32/prefill/voxcpm2_prefill.onnx"),
+        help="ONNX output path.",
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument(

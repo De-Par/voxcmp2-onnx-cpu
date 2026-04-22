@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check and run the exported VoxCPM2 AudioVAE decoder with ONNX Runtime CPU."""
+"""Check and run the exported VoxCPM2 AudioVAE decoder with ONNX Runtime CPU"""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/runtime/run_audio_vae_decoder_ort.py "
-            "--onnx-path artifacts/audio_vae_decoder/audio_vae_decoder.onnx"
+            "--onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx"
         ),
     )
     parser.add_argument("--onnx-path", type=Path, required=True, help="Path to audio_vae_decoder.onnx.")

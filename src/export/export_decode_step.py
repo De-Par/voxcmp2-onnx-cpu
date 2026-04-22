@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export one VoxCPM2 decode step to ONNX."""
+"""Export one VoxCPM2 decode step to ONNX"""
 
 from __future__ import annotations
 
@@ -501,14 +501,17 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_decode_step.py "
-            "--output artifacts/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
+            "--output models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
         ),
     )
     parser.add_argument(
         "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
     )
     parser.add_argument(
-        "--output", type=Path, default=Path("artifacts/decode_step/voxcpm2_decode_step.onnx"), help="ONNX output path."
+        "--output",
+        type=Path,
+        default=Path("models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx"),
+        help="ONNX output path.",
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument(

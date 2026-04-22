@@ -1,4 +1,4 @@
-"""Typed contracts for proposed VoxCPM2 ONNX module boundaries."""
+"""Typed contracts for proposed VoxCPM2 ONNX module boundaries"""
 
 from .module_schemas import (
     AUDIO_VAE_DECODER_INPUTS,

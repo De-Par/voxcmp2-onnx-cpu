@@ -13,8 +13,15 @@ __pycache__/
 # Upstream checkout is managed as an optional local submodule/worktree
 third_party/
 
-# Generated ONNX models, external data, benchmark WAVs, JSON reports, and traces
+# Local model weights / exported ONNX graphs. Keep .onnx external data next to
+# the .onnx file, but keep the whole tree out of git
+models/onnx/
+models/hf/
+
+# Generated outputs: benchmark WAVs/JSON, reports, smoke samples, and logs
 artifacts/
+
+# Generate-path JSONL traces are local comparison data
 traces/
 
 # Local package/build outputs

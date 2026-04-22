@@ -1,4 +1,4 @@
-"""Lazy ONNX Runtime CPU session factory for VoxCPM2 modules."""
+"""Lazy ONNX Runtime CPU session factory for VoxCPM2 modules"""
 
 from __future__ import annotations
 
@@ -10,16 +10,17 @@ import onnxruntime as ort
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+ONNX_MODELS_ROOT = REPO_ROOT / "models" / "onnx"
 CPU_PROVIDER = "CPUExecutionProvider"
 FORBIDDEN_PROVIDERS = {"CUDAExecutionProvider", "CoreMLExecutionProvider", "MPSExecutionProvider"}
 
 
 @dataclass(frozen=True)
 class OnnxModelPaths:
-    audio_encoder: Path = REPO_ROOT / "artifacts" / "audio_vae_encoder" / "audio_vae_encoder.onnx"
-    audio_decoder: Path = REPO_ROOT / "artifacts" / "audio_vae_decoder" / "audio_vae_decoder.onnx"
-    prefill: Path = REPO_ROOT / "artifacts" / "prefill" / "voxcpm2_prefill.onnx"
-    decode_step: Path = REPO_ROOT / "artifacts" / "decode_step" / "voxcpm2_decode_step.onnx"
+    audio_encoder: Path = ONNX_MODELS_ROOT / "fp32" / "audio_vae_encoder" / "audio_vae_encoder.onnx"
+    audio_decoder: Path = ONNX_MODELS_ROOT / "fp32" / "audio_vae_decoder" / "audio_vae_decoder.onnx"
+    prefill: Path = ONNX_MODELS_ROOT / "fp32" / "prefill" / "voxcpm2_prefill.onnx"
+    decode_step: Path = ONNX_MODELS_ROOT / "fp32" / "decode_step" / "voxcpm2_decode_step.onnx"
 
     def expanded(self) -> "OnnxModelPaths":
         return OnnxModelPaths(
@@ -38,7 +39,7 @@ class OnnxModelPaths:
 
 @dataclass
 class OrtSessionFactory:
-    """Create ONNX Runtime sessions lazily and CPU-only."""
+    """Create ONNX Runtime sessions lazily and CPU-only"""
 
     paths: OnnxModelPaths = field(default_factory=OnnxModelPaths)
     disable_graph_optimizations: bool = True

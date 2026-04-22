@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parity check for one VoxCPM2 decode step: PyTorch vs ONNX Runtime."""
+"""Parity check for one VoxCPM2 decode step: PyTorch vs ONNX Runtime"""
 
 from __future__ import annotations
 

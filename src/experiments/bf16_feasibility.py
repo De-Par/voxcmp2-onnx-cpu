@@ -28,10 +28,10 @@ from onnx import TensorProto, helper, numpy_helper
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_MODELS = {
-    "audio_vae_encoder": REPO_ROOT / "artifacts" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
-    "audio_vae_decoder": REPO_ROOT / "artifacts" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
-    "prefill": REPO_ROOT / "artifacts" / "prefill" / "voxcpm2_prefill.onnx",
-    "decode_step": REPO_ROOT / "artifacts" / "decode_step" / "voxcpm2_decode_step.onnx",
+    "audio_vae_encoder": REPO_ROOT / "models" / "onnx" / "fp32" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
+    "audio_vae_decoder": REPO_ROOT / "models" / "onnx" / "fp32" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
+    "prefill": REPO_ROOT / "models" / "onnx" / "fp32" / "prefill" / "voxcpm2_prefill.onnx",
+    "decode_step": REPO_ROOT / "models" / "onnx" / "fp32" / "decode_step" / "voxcpm2_decode_step.onnx",
 }
 LARGE_MODELS = {"prefill", "decode_step"}
 
@@ -296,7 +296,7 @@ def _default_report_json(args: argparse.Namespace) -> Path:
         return args.report_json
     model_part = "all" if set(args.models) == set(DEFAULT_MODELS) else "_".join(args.models)
     precision = "fp32" if args.mode == "analyze" else "bf16"
-    return Path("artifacts/bf16_feasibility") / f"{precision}_{model_part}_report.json"
+    return Path("artifacts/reports/bf16_feasibility") / f"{precision}_{model_part}_report.json"
 
 
 def _check_large_model_policy(args: argparse.Namespace) -> None:
@@ -401,11 +401,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("artifacts/bf16_experiment"),
+        default=Path("models/onnx/bf16"),
         help="Directory for converted experimental ONNX artifacts.",
     )
     parser.add_argument(
-        "--report-json", type=Path, help="JSON report output path. Defaults to artifacts/bf16_feasibility."
+        "--report-json", type=Path, help="JSON report output path. Defaults to artifacts/reports/bf16_feasibility."
     )
     parser.add_argument(
         "--min-tensor-bytes",

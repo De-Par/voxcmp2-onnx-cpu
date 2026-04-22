@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trace the official VoxCPM2 generate path without logging tensor contents."""
+"""Trace the official VoxCPM2 generate path without logging tensor contents"""
 
 from __future__ import annotations
 
