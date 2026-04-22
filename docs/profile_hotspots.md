@@ -81,7 +81,7 @@ This mapping is diagnostic. It does not prove that a code site should be changed
 The parser derives the shortlist from actual profile data. Common categories to expect:
 
 1. Dominant op type, usually large matrix/attention work in `decode_step`.
-2. Explicit cache/state movement, especially cache `Concat`/shape ops in `decode_step`.
+2. Explicit cache/state movement. Production decode_step now uses fixed-capacity caches and one-position update outputs; any remaining cache `Concat`/shape hotspots should be treated as diagnostic targets.
 3. Cast or CastLike nodes introduced by dtype guards or exported graph conversions.
 4. AudioVAE encode/decode convolution blocks when clone/reference paths are active.
 5. Host-visible session split overhead, if total wall time is high but individual node time is not.

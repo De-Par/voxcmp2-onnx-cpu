@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.io import wavfile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +51,10 @@ def test_cpu_only_runtime_smoke() -> None:
 
     assert set(paths) == {"audio_encoder", "audio_decoder", "prefill", "decode_step"}
     assert pipeline.sessions.created_session_names == ()
+
+    decode_inputs = {item.name for item in pipeline.sessions.decode_step.get_inputs()}
+    if "base_current_length" not in decode_inputs:
+        pytest.skip("decode_step artifact uses the old grow-by-concat cache contract; re-export fixed-cache ONNX")
 
     waveform = pipeline.synthesize(
         "Hello from VoxCPM2.",

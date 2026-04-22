@@ -39,10 +39,10 @@ DECODE_INPUTS = [
     "prefix_feat_cond",
     "base_k_cache",
     "base_v_cache",
-    "base_cache_length",
+    "base_current_length",
     "residual_k_cache",
     "residual_v_cache",
-    "residual_cache_length",
+    "residual_current_length",
     "diffusion_noise",
     "cfg_value",
 ]
@@ -53,12 +53,12 @@ DECODE_OUTPUTS = [
     "next_lm_hidden",
     "next_residual_hidden",
     "next_prefix_feat_cond",
-    "next_base_k_cache",
-    "next_base_v_cache",
-    "next_base_cache_length",
-    "next_residual_k_cache",
-    "next_residual_v_cache",
-    "next_residual_cache_length",
+    "base_k_update",
+    "base_v_update",
+    "next_base_current_length",
+    "residual_k_update",
+    "residual_v_update",
+    "next_residual_current_length",
 ]
 
 
@@ -250,7 +250,10 @@ class VoxCPM2OnnxPipeline:
         )
 
         prefill_outputs = self.sessions.prefill.run(PREFILL_OUTPUTS, sequence)
-        state = dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True))
+        state = self._init_fixed_capacity_decode_state(
+            dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True)),
+            max_decode_steps=effective_max_steps,
+        )
         rng = np.random.default_rng(seed)
         generated: list[np.ndarray] = []
         stop_reason: StopReason | None = None
@@ -265,10 +268,10 @@ class VoxCPM2OnnxPipeline:
                 "prefix_feat_cond": state["prefix_feat_cond"],
                 "base_k_cache": state["base_k_cache"],
                 "base_v_cache": state["base_v_cache"],
-                "base_cache_length": state["base_cache_length"],
+                "base_current_length": state["base_current_length"],
                 "residual_k_cache": state["residual_k_cache"],
                 "residual_v_cache": state["residual_v_cache"],
-                "residual_cache_length": state["residual_cache_length"],
+                "residual_current_length": state["residual_current_length"],
                 "diffusion_noise": rng.standard_normal(
                     (1, self.config.feat_dim, self.config.patch_size), dtype=np.float32
                 ),
@@ -288,17 +291,10 @@ class VoxCPM2OnnxPipeline:
                 progress_callback(completed_steps, stop_reason)
             if stop_reason is not None:
                 break
-            state = {
-                "lm_hidden": outputs["next_lm_hidden"],
-                "residual_hidden": outputs["next_residual_hidden"],
-                "prefix_feat_cond": outputs["next_prefix_feat_cond"],
-                "base_k_cache": outputs["next_base_k_cache"],
-                "base_v_cache": outputs["next_base_v_cache"],
-                "base_cache_length": outputs["next_base_cache_length"],
-                "residual_k_cache": outputs["next_residual_k_cache"],
-                "residual_v_cache": outputs["next_residual_v_cache"],
-                "residual_cache_length": outputs["next_residual_cache_length"],
-            }
+            self._apply_decode_cache_updates(state, outputs)
+            state["lm_hidden"] = outputs["next_lm_hidden"]
+            state["residual_hidden"] = outputs["next_residual_hidden"]
+            state["prefix_feat_cond"] = outputs["next_prefix_feat_cond"]
 
         feature_seq = np.concatenate(generated, axis=1)
         # AudioVAEDecoder expects [B, latent_dim, latent_steps]. The decode-step
@@ -317,6 +313,49 @@ class VoxCPM2OnnxPipeline:
                 min_steps=min_steps,
             ),
         )
+
+    @staticmethod
+    def _init_fixed_capacity_decode_state(
+        prefill_state: dict[str, np.ndarray],
+        *,
+        max_decode_steps: int,
+    ) -> dict[str, np.ndarray]:
+        """Allocate fixed-capacity KV caches once for the host decode loop."""
+
+        base_current_length = prefill_state["base_cache_length"].astype(np.int64, copy=False)
+        residual_current_length = prefill_state["residual_cache_length"].astype(np.int64, copy=False)
+        base_capacity = int(base_current_length[0]) + max_decode_steps
+        residual_capacity = int(residual_current_length[0]) + max_decode_steps
+
+        def make_cache(cache: np.ndarray, capacity: int) -> np.ndarray:
+            fixed = np.zeros((*cache.shape[:3], capacity, cache.shape[4]), dtype=cache.dtype)
+            fixed[:, :, :, : cache.shape[3], :] = cache
+            return fixed
+
+        return {
+            "lm_hidden": prefill_state["lm_hidden"],
+            "residual_hidden": prefill_state["residual_hidden"],
+            "prefix_feat_cond": prefill_state["prefix_feat_cond"],
+            "base_k_cache": make_cache(prefill_state["base_k_cache"], base_capacity),
+            "base_v_cache": make_cache(prefill_state["base_v_cache"], base_capacity),
+            "base_current_length": base_current_length,
+            "residual_k_cache": make_cache(prefill_state["residual_k_cache"], residual_capacity),
+            "residual_v_cache": make_cache(prefill_state["residual_v_cache"], residual_capacity),
+            "residual_current_length": residual_current_length,
+        }
+
+    @staticmethod
+    def _apply_decode_cache_updates(state: dict[str, np.ndarray], outputs: dict[str, np.ndarray]) -> None:
+        """Apply one-position K/V updates returned by the fixed-cache graph."""
+
+        base_index = int(state["base_current_length"][0])
+        residual_index = int(state["residual_current_length"][0])
+        state["base_k_cache"][:, :, :, base_index : base_index + 1, :] = outputs["base_k_update"]
+        state["base_v_cache"][:, :, :, base_index : base_index + 1, :] = outputs["base_v_update"]
+        state["residual_k_cache"][:, :, :, residual_index : residual_index + 1, :] = outputs["residual_k_update"]
+        state["residual_v_cache"][:, :, :, residual_index : residual_index + 1, :] = outputs["residual_v_update"]
+        state["base_current_length"] = outputs["next_base_current_length"].astype(np.int64, copy=False)
+        state["residual_current_length"] = outputs["next_residual_current_length"].astype(np.int64, copy=False)
 
     def write_wav(self, path: str | Path, waveform: np.ndarray) -> None:
         # WAV writing is intentionally host code, not ONNX. int16 output keeps

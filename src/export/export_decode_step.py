@@ -84,8 +84,9 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
 
     The official implementation stores KV state in Python ``StaticKVCache`` and
     mutates it inside ``MiniCPMModel.forward_step``. This wrapper keeps the same
-    per-layer math but accepts valid cache tensors and returns extended cache
-    tensors, so the host code owns the autoregressive loop.
+    per-layer math but accepts fixed-capacity cache tensors and returns
+    one-position K/V updates, so host code owns the autoregressive loop and
+    cache mutation.
     """
 
     def __init__(
@@ -111,6 +112,7 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         position_emb: tuple[torch.Tensor, torch.Tensor] | None,
         layer_k_cache: torch.Tensor,
         layer_v_cache: torch.Tensor,
+        current_length: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         bsz, _ = hidden_states.size()
         attn = layer.self_attn
@@ -127,29 +129,33 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
             cos, sin = position_emb
             query_states, key_states = _apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        next_k_cache = torch.cat((layer_k_cache, key_states), dim=2)
-        next_v_cache = torch.cat((layer_v_cache, value_states), dim=2)
+        positions = torch.arange(layer_k_cache.shape[2], device=layer_k_cache.device, dtype=torch.long)
+        write_mask = (positions == current_length).reshape(1, 1, -1, 1)
+        valid_mask = (positions <= current_length).reshape(1, 1, 1, -1)
+        attention_k = torch.where(write_mask, key_states, layer_k_cache)
+        attention_v = torch.where(write_mask, value_states, layer_v_cache)
 
         attn_output = F.scaled_dot_product_attention(
             query_states.contiguous(),
-            next_k_cache.contiguous(),
-            next_v_cache.contiguous(),
+            attention_k.contiguous(),
+            attention_v.contiguous(),
+            attn_mask=valid_mask,
             enable_gqa=True,
         )
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, attn.num_heads * attn.head_dim)
         attn_output = attn.o_proj(attn_output)
-        return attn_output, next_k_cache, next_v_cache
+        return attn_output, key_states, value_states
 
     def _transformer_step(
         self,
         lm: torch.nn.Module,
         inputs_embeds: torch.Tensor,
-        cache_length: torch.Tensor,
+        current_length: torch.Tensor,
         k_cache: torch.Tensor,
         v_cache: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        position_id = cache_length.to(dtype=torch.long)
+        position_id = current_length.to(dtype=torch.long)
         if lm.rope_emb is not None:
             position_emb = lm.rope_emb(position_id)
         else:
@@ -169,6 +175,7 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
                 position_emb,
                 k_cache[layer_idx],
                 v_cache[layer_idx],
+                current_length,
             )
             if decoder_layer.use_mup:
                 hidden_states = residual + hidden_states * (
@@ -191,7 +198,7 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
             next_v_layers.append(layer_v)
 
         hidden_states = lm.norm(hidden_states)
-        return hidden_states, torch.stack(next_k_layers, dim=0), torch.stack(next_v_layers, dim=0), cache_length + 1
+        return hidden_states, torch.stack(next_k_layers, dim=0), torch.stack(next_v_layers, dim=0), current_length + 1
 
     def forward(
         self,
@@ -200,10 +207,10 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         prefix_feat_cond: torch.Tensor,
         base_k_cache: torch.Tensor,
         base_v_cache: torch.Tensor,
-        base_cache_length: torch.Tensor,
+        base_current_length: torch.Tensor,
         residual_k_cache: torch.Tensor,
         residual_v_cache: torch.Tensor,
-        residual_cache_length: torch.Tensor,
+        residual_current_length: torch.Tensor,
         diffusion_noise: torch.Tensor,
         cfg_value: torch.Tensor,
     ) -> tuple[torch.Tensor, ...]:
@@ -240,10 +247,10 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
 
         stop_logits = model.stop_head(model.stop_actn(model.stop_proj(lm_hidden)))
 
-        next_lm_hidden, next_base_k_cache, next_base_v_cache, next_base_cache_length = self._transformer_step(
+        next_lm_hidden, base_k_update, base_v_update, next_base_current_length = self._transformer_step(
             model.base_lm,
             curr_embed,
-            base_cache_length,
+            base_current_length,
             base_k_cache,
             base_v_cache,
         )
@@ -251,13 +258,13 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         curr_residual_input = model.fusion_concat_proj(torch.cat((next_lm_hidden, curr_embed), dim=-1))
         (
             next_residual_hidden,
-            next_residual_k_cache,
-            next_residual_v_cache,
-            next_residual_cache_length,
+            residual_k_update,
+            residual_v_update,
+            next_residual_current_length,
         ) = self._transformer_step(
             model.residual_lm,
             curr_residual_input,
-            residual_cache_length,
+            residual_current_length,
             residual_k_cache,
             residual_v_cache,
         )
@@ -269,19 +276,20 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
             next_lm_hidden.to(dtype=self.host_float_dtype),
             next_residual_hidden.to(dtype=self.host_float_dtype),
             pred_feat.to(dtype=self.host_float_dtype),
-            next_base_k_cache.to(dtype=self.host_float_dtype),
-            next_base_v_cache.to(dtype=self.host_float_dtype),
-            next_base_cache_length,
-            next_residual_k_cache.to(dtype=self.host_float_dtype),
-            next_residual_v_cache.to(dtype=self.host_float_dtype),
-            next_residual_cache_length,
+            base_k_update.to(dtype=self.host_float_dtype),
+            base_v_update.to(dtype=self.host_float_dtype),
+            next_base_current_length,
+            residual_k_update.to(dtype=self.host_float_dtype),
+            residual_v_update.to(dtype=self.host_float_dtype),
+            next_residual_current_length,
         )
 
 
 def make_synthetic_decode_step_inputs(
     *,
     batch_size: int,
-    cache_seq: int,
+    current_length: int,
+    max_cache_seq: int,
     hidden_size: int,
     patch_size: int,
     feat_dim: int,
@@ -292,27 +300,29 @@ def make_synthetic_decode_step_inputs(
     cfg_value: float,
     seed: int,
 ) -> dict[str, torch.Tensor]:
-    if cache_seq < 1:
-        raise ValueError("--cache-seq must be >= 1")
+    if current_length < 1:
+        raise ValueError("--current-length must be >= 1")
+    if max_cache_seq <= current_length:
+        raise ValueError("--max-cache-seq must be greater than --current-length")
     generator = torch.Generator(device="cpu").manual_seed(seed)
     return {
         "lm_hidden": torch.randn(batch_size, hidden_size, dtype=torch.float32, generator=generator),
         "residual_hidden": torch.randn(batch_size, hidden_size, dtype=torch.float32, generator=generator),
         "prefix_feat_cond": torch.randn(batch_size, patch_size, feat_dim, dtype=torch.float32, generator=generator),
         "base_k_cache": torch.randn(
-            base_layers, batch_size, kv_heads, cache_seq, head_dim, dtype=torch.float32, generator=generator
+            base_layers, batch_size, kv_heads, max_cache_seq, head_dim, dtype=torch.float32, generator=generator
         ),
         "base_v_cache": torch.randn(
-            base_layers, batch_size, kv_heads, cache_seq, head_dim, dtype=torch.float32, generator=generator
+            base_layers, batch_size, kv_heads, max_cache_seq, head_dim, dtype=torch.float32, generator=generator
         ),
-        "base_cache_length": torch.tensor([cache_seq], dtype=torch.long),
+        "base_current_length": torch.tensor([current_length], dtype=torch.long),
         "residual_k_cache": torch.randn(
-            residual_layers, batch_size, kv_heads, cache_seq, head_dim, dtype=torch.float32, generator=generator
+            residual_layers, batch_size, kv_heads, max_cache_seq, head_dim, dtype=torch.float32, generator=generator
         ),
         "residual_v_cache": torch.randn(
-            residual_layers, batch_size, kv_heads, cache_seq, head_dim, dtype=torch.float32, generator=generator
+            residual_layers, batch_size, kv_heads, max_cache_seq, head_dim, dtype=torch.float32, generator=generator
         ),
-        "residual_cache_length": torch.tensor([cache_seq], dtype=torch.long),
+        "residual_current_length": torch.tensor([current_length], dtype=torch.long),
         "diffusion_noise": torch.randn(batch_size, feat_dim, patch_size, dtype=torch.float32, generator=generator),
         "cfg_value": torch.tensor([cfg_value], dtype=torch.float32),
     }
@@ -332,23 +342,29 @@ def _model_dims(model: torch.nn.Module) -> dict[str, int]:
 
 
 def _dynamic_shapes() -> dict[str, dict[int, Any]]:
-    cache_seq = torch.export.Dim("cache_seq", min=1)
+    max_cache_seq = torch.export.Dim("max_cache_seq", min=2)
     return {
         "lm_hidden": {},
         "residual_hidden": {},
         "prefix_feat_cond": {},
-        "base_k_cache": {3: cache_seq},
-        "base_v_cache": {3: cache_seq},
-        "base_cache_length": {},
-        "residual_k_cache": {3: cache_seq},
-        "residual_v_cache": {3: cache_seq},
-        "residual_cache_length": {},
+        "base_k_cache": {3: max_cache_seq},
+        "base_v_cache": {3: max_cache_seq},
+        "base_current_length": {},
+        "residual_k_cache": {3: max_cache_seq},
+        "residual_v_cache": {3: max_cache_seq},
+        "residual_current_length": {},
         "diffusion_noise": {},
         "cfg_value": {},
     }
 
 
-def _shape_report(model: torch.nn.Module, batch_size: int, cache_seq: int, inference_timesteps: int) -> dict[str, Any]:
+def _shape_report(
+    model: torch.nn.Module,
+    batch_size: int,
+    current_length: int,
+    max_cache_seq: int,
+    inference_timesteps: int,
+) -> dict[str, Any]:
     dims = _model_dims(model)
     return {
         "inference_timesteps": inference_timesteps,
@@ -365,7 +381,7 @@ def _shape_report(model: torch.nn.Module, batch_size: int, cache_seq: int, infer
                     f"static:{dims['base_layers']}",
                     f"static:{batch_size}",
                     f"static:{dims['kv_heads']}",
-                    "dynamic:cache_seq",
+                    "dynamic:max_cache_seq",
                     f"static:{dims['head_dim']}",
                 ],
             },
@@ -375,18 +391,18 @@ def _shape_report(model: torch.nn.Module, batch_size: int, cache_seq: int, infer
                     f"static:{dims['base_layers']}",
                     f"static:{batch_size}",
                     f"static:{dims['kv_heads']}",
-                    "dynamic:cache_seq",
+                    "dynamic:max_cache_seq",
                     f"static:{dims['head_dim']}",
                 ],
             },
-            "base_cache_length": {"dtype": "int64", "dims": ["static:1"]},
+            "base_current_length": {"dtype": "int64", "dims": ["static:1"], "example_value": current_length},
             "residual_k_cache": {
                 "dtype": "float32",
                 "dims": [
                     f"static:{dims['residual_layers']}",
                     f"static:{batch_size}",
                     f"static:{dims['kv_heads']}",
-                    "dynamic:cache_seq",
+                    "dynamic:max_cache_seq",
                     f"static:{dims['head_dim']}",
                 ],
             },
@@ -396,11 +412,11 @@ def _shape_report(model: torch.nn.Module, batch_size: int, cache_seq: int, infer
                     f"static:{dims['residual_layers']}",
                     f"static:{batch_size}",
                     f"static:{dims['kv_heads']}",
-                    "dynamic:cache_seq",
+                    "dynamic:max_cache_seq",
                     f"static:{dims['head_dim']}",
                 ],
             },
-            "residual_cache_length": {"dtype": "int64", "dims": ["static:1"]},
+            "residual_current_length": {"dtype": "int64", "dims": ["static:1"], "example_value": current_length},
             "diffusion_noise": {
                 "dtype": "float32",
                 "dims": [f"static:{batch_size}", f"static:{dims['feat_dim']}", f"static:{dims['patch_size']}"],
@@ -423,38 +439,38 @@ def _shape_report(model: torch.nn.Module, batch_size: int, cache_seq: int, infer
                 f"static:{dims['patch_size']}",
                 f"static:{dims['feat_dim']}",
             ],
-            "next_base_k_cache": [
+            "base_k_update": [
                 f"static:{dims['base_layers']}",
                 f"static:{batch_size}",
                 f"static:{dims['kv_heads']}",
-                "dynamic:cache_seq_plus_1",
+                "static:1",
                 f"static:{dims['head_dim']}",
             ],
-            "next_base_v_cache": [
+            "base_v_update": [
                 f"static:{dims['base_layers']}",
                 f"static:{batch_size}",
                 f"static:{dims['kv_heads']}",
-                "dynamic:cache_seq_plus_1",
+                "static:1",
                 f"static:{dims['head_dim']}",
             ],
-            "next_base_cache_length": ["static:1"],
-            "next_residual_k_cache": [
+            "next_base_current_length": ["static:1"],
+            "residual_k_update": [
                 f"static:{dims['residual_layers']}",
                 f"static:{batch_size}",
                 f"static:{dims['kv_heads']}",
-                "dynamic:cache_seq_plus_1",
+                "static:1",
                 f"static:{dims['head_dim']}",
             ],
-            "next_residual_v_cache": [
+            "residual_v_update": [
                 f"static:{dims['residual_layers']}",
                 f"static:{batch_size}",
                 f"static:{dims['kv_heads']}",
-                "dynamic:cache_seq_plus_1",
+                "static:1",
                 f"static:{dims['head_dim']}",
             ],
-            "next_residual_cache_length": ["static:1"],
+            "next_residual_current_length": ["static:1"],
         },
-        "example": {"batch_size": batch_size, "cache_seq": cache_seq},
+        "example": {"batch_size": batch_size, "current_length": current_length, "max_cache_seq": max_cache_seq},
     }
 
 
@@ -470,7 +486,8 @@ def export_decode_step(args: argparse.Namespace) -> None:
     dims = _model_dims(model)
     inputs = make_synthetic_decode_step_inputs(
         batch_size=args.batch_size,
-        cache_seq=args.cache_seq,
+        current_length=args.current_length,
+        max_cache_seq=args.max_cache_seq,
         cfg_value=args.cfg_value,
         seed=args.seed,
         **dims,
@@ -481,7 +498,13 @@ def export_decode_step(args: argparse.Namespace) -> None:
         precision=precision,
         input_names=INPUT_NAMES,
         output_names=OUTPUT_NAMES,
-        shape_report=_shape_report(model, args.batch_size, args.cache_seq, args.inference_timesteps),
+        shape_report=_shape_report(
+            model,
+            args.batch_size,
+            args.current_length,
+            args.max_cache_seq,
+            args.inference_timesteps,
+        ),
         output_path=output_path,
     )
     export_onnx_graph(
@@ -503,7 +526,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/export/export_decode_step.py "
-            "--precision fp32 --cache-seq 16"
+            "--precision fp32 --current-length 16 --max-cache-seq 64"
         ),
     )
     parser.add_argument(
@@ -518,7 +541,13 @@ def _parser() -> argparse.ArgumentParser:
     add_precision_argument(parser)
     parser.add_argument("--batch-size", type=int, default=1, help="Example batch dimension used during export.")
     parser.add_argument(
-        "--cache-seq", type=int, default=16, help="Example valid KV-cache length entering the decode step."
+        "--current-length", type=int, default=16, help="Example valid KV-cache length entering the decode step."
+    )
+    parser.add_argument(
+        "--max-cache-seq",
+        type=int,
+        default=64,
+        help="Example fixed KV-cache capacity used during export; must exceed --current-length.",
     )
     parser.add_argument(
         "--inference-timesteps",

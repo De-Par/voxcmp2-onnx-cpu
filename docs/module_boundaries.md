@@ -70,6 +70,8 @@ Cache/state tensors between prefill and decode step:
 - `residual_v_cache`: `float32[residual_layers=8, B, kv_heads, cache_seq, head_dim]`
 - `residual_cache_length`: `int64[1]`
 
+Before the first decode step, host code copies these prefill caches into fixed-capacity buffers and maps lengths to `base_current_length` and `residual_current_length`.
+
 The trace showed `kv_heads=2`, `head_dim=128` for the current weights. Export code must read these from config, not hardcode them.
 
 The PyTorch implementation stores cache internally as `StaticKVCache` with a combined leading K/V dimension. The ONNX boundary should expose K and V as separate tensors because ORT sessions cannot mutate Python objects and separate tensors make append/update behavior explicit.
@@ -83,8 +85,8 @@ Input:
 - `lm_hidden`: `float32[B, 2048]`
 - `residual_hidden`: `float32[B, 2048]`
 - `prefix_feat_cond`: `float32[B, 4, 64]`
-- base LM KV cache tensors and `base_cache_length`
-- residual LM KV cache tensors and `residual_cache_length`
+- fixed-capacity base LM KV cache tensors and `base_current_length`
+- fixed-capacity residual LM KV cache tensors and `residual_current_length`
 - `diffusion_noise`: `float32[B, 64, 4]`
 - `cfg_value`: `float32[1]`
 
@@ -96,8 +98,10 @@ Output:
 - updated `lm_hidden`
 - updated `residual_hidden`
 - updated `prefix_feat_cond`
-- updated base LM KV cache tensors and `base_cache_length + 1`
-- updated residual LM KV cache tensors and `residual_cache_length + 1`
+- `base_k_update`, `base_v_update`, and `next_base_current_length`
+- `residual_k_update`, `residual_v_update`, and `next_residual_current_length`
+
+The production decode-step contract does not grow cache tensor shapes. Host code writes each one-position update into the fixed-capacity cache at the current length.
 
 `diffusion_noise` is an explicit input so ONNX inference is deterministic and comparable. This replaces the in-graph `torch.randn` call with host-supplied noise while preserving the diffusion math.
 
@@ -136,7 +140,7 @@ Use the per-module runtime checkers after export:
 python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
+python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16 --max-cache-seq 64
 ```
 
 ## Non-Goals

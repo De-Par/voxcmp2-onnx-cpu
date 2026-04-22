@@ -28,6 +28,12 @@ class TransformerCacheSpec(TypedDict):
     cache_length: TensorSpec
 
 
+class TransformerCacheUpdateSpec(TypedDict):
+    key: TensorSpec
+    value: TensorSpec
+    next_length: TensorSpec
+
+
 class AudioVAEEncoderInputs(TypedDict):
     waveform: TensorSpec
 
@@ -77,29 +83,53 @@ class VoxCPM2DecodeStepOutputs(TypedDict):
     next_lm_hidden: TensorSpec
     next_residual_hidden: TensorSpec
     next_prefix_feat_cond: TensorSpec
-    next_base_cache: TransformerCacheSpec
-    next_residual_cache: TransformerCacheSpec
+    base_cache_update: TransformerCacheUpdateSpec
+    residual_cache_update: TransformerCacheUpdateSpec
 
 
-def _cache(prefix: str, layers: str) -> TransformerCacheSpec:
+def _cache(prefix: str, layers: str, *, seq_label: str = "cache_seq", length_name: str | None = None) -> TransformerCacheSpec:
+    length_tensor_name = length_name or f"{prefix}_cache_length"
     return {
         "key": TensorSpec(
             name=f"{prefix}_k_cache",
             dtype="float32",
-            shape=(layers, "batch", "kv_heads", "cache_seq", "head_dim"),
+            shape=(layers, "batch", "kv_heads", seq_label, "head_dim"),
             description="Transformer key cache carried between prefill and decode steps.",
         ),
         "value": TensorSpec(
             name=f"{prefix}_v_cache",
             dtype="float32",
-            shape=(layers, "batch", "kv_heads", "cache_seq", "head_dim"),
+            shape=(layers, "batch", "kv_heads", seq_label, "head_dim"),
             description="Transformer value cache carried between prefill and decode steps.",
         ),
         "cache_length": TensorSpec(
-            name=f"{prefix}_cache_length",
+            name=length_tensor_name,
             dtype="int64",
             shape=("1",),
-            description="Number of valid cache positions; decode_step returns this value plus one.",
+            description="Number of valid cache positions.",
+        ),
+    }
+
+
+def _cache_update(prefix: str, layers: str) -> TransformerCacheUpdateSpec:
+    return {
+        "key": TensorSpec(
+            name=f"{prefix}_k_update",
+            dtype="float32",
+            shape=(layers, "batch", "kv_heads", "1", "head_dim"),
+            description="One newly generated key position to write at current_length in host code.",
+        ),
+        "value": TensorSpec(
+            name=f"{prefix}_v_update",
+            dtype="float32",
+            shape=(layers, "batch", "kv_heads", "1", "head_dim"),
+            description="One newly generated value position to write at current_length in host code.",
+        ),
+        "next_length": TensorSpec(
+            name=f"next_{prefix}_current_length",
+            dtype="int64",
+            shape=("1",),
+            description="Updated valid cache length after applying the one-position update.",
         ),
     }
 
@@ -192,8 +222,10 @@ VOXCPM2_PREFILL_OUTPUTS: VoxCPM2PrefillOutputs = {
         shape=("batch", "patch_size_4", "latent_dim_64"),
         description="Last audio feature condition for the first diffusion decode step.",
     ),
-    "base_cache": _cache("base", "base_layers_28"),
-    "residual_cache": _cache("residual", "residual_layers_8"),
+    "base_cache": _cache("base", "base_layers_28", seq_label="max_cache_seq", length_name="base_current_length"),
+    "residual_cache": _cache(
+        "residual", "residual_layers_8", seq_label="max_cache_seq", length_name="residual_current_length"
+    ),
 }
 
 VOXCPM2_DECODE_STEP_INPUTS: VoxCPM2DecodeStepInputs = {
@@ -253,6 +285,6 @@ VOXCPM2_DECODE_STEP_OUTPUTS: VoxCPM2DecodeStepOutputs = {
         shape=("batch", "patch_size_4", "latent_dim_64"),
         description="Generated patch reused as the next diffusion condition.",
     ),
-    "next_base_cache": _cache("next_base", "base_layers_28"),
-    "next_residual_cache": _cache("next_residual", "residual_layers_8"),
+    "base_cache_update": _cache_update("base", "base_layers_28"),
+    "residual_cache_update": _cache_update("residual", "residual_layers_8"),
 }

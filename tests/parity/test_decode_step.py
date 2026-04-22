@@ -33,6 +33,7 @@ def _decode_step_helpers():
         make_synthetic_decode_step_inputs,
     )
     from src.export.export_prefill import load_voxcpm2_prefill_model
+    from src.export.common import get_precision_profile
 
     return (
         INPUT_NAMES,
@@ -42,6 +43,7 @@ def _decode_step_helpers():
         make_synthetic_decode_step_inputs,
         load_voxcpm2_prefill_model,
         _resolve_model_path,
+        get_precision_profile,
     )
 
 
@@ -76,13 +78,16 @@ def compare_decode_step(args: argparse.Namespace) -> dict[str, object]:
         make_synthetic_decode_step_inputs,
         load_voxcpm2_prefill_model,
         _resolve_model_path,
+        get_precision_profile,
     ) = _decode_step_helpers()
+    precision = get_precision_profile(args.precision)
     model_dir = _resolve_model_path(args.model_path, args.local_files_only)
-    model = load_voxcpm2_prefill_model(model_dir)
-    wrapper = VoxCPM2DecodeStepWrapper(model, inference_timesteps=args.inference_timesteps).eval()
+    model = load_voxcpm2_prefill_model(model_dir, precision)
+    wrapper = VoxCPM2DecodeStepWrapper(model, inference_timesteps=args.inference_timesteps, precision=precision).eval()
     inputs = make_synthetic_decode_step_inputs(
         batch_size=args.batch_size,
-        cache_seq=args.cache_seq,
+        current_length=args.cache_seq,
+        max_cache_seq=args.max_cache_seq,
         cfg_value=args.cfg_value,
         seed=args.seed,
         **_model_dims(model),
@@ -109,7 +114,9 @@ def compare_decode_step(args: argparse.Namespace) -> dict[str, object]:
     failures = [item for item in per_output if item["max_abs_diff"] > args.atol]
     result = {
         "atol": args.atol,
+        "precision": precision.name,
         "cache_seq": args.cache_seq,
+        "max_cache_seq": args.max_cache_seq,
         "inference_timesteps": args.inference_timesteps,
         "max_abs_diff": max(item["max_abs_diff"] for item in per_output),
         "outputs": per_output,
@@ -137,10 +144,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_decode_step.onnx.")
     parser.add_argument(
+        "--precision",
+        choices=["fp32", "bf16"],
+        default="fp32",
+        help="Precision profile used to load the PyTorch wrapper for parity.",
+    )
+    parser.add_argument(
         "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for parity input.")
     parser.add_argument("--cache-seq", type=int, default=16, help="Synthetic valid KV-cache length entering the step.")
+    parser.add_argument(
+        "--max-cache-seq",
+        type=int,
+        default=64,
+        help="Synthetic fixed KV-cache capacity entering the step; must exceed --cache-seq.",
+    )
     parser.add_argument(
         "--inference-timesteps", type=int, default=10, help="CFM/LocDiT solver steps embedded in the exported graph."
     )

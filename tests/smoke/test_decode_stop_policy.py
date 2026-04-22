@@ -51,11 +51,11 @@ class _FakeSessions:
             "lm_hidden": np.zeros((1, 1, 2), dtype=np.float32),
             "residual_hidden": np.zeros((1, 1, 2), dtype=np.float32),
             "prefix_feat_cond": np.zeros((1, 1, 2), dtype=np.float32),
-            "base_k_cache": np.zeros((1, 1, 1, 1), dtype=np.float32),
-            "base_v_cache": np.zeros((1, 1, 1, 1), dtype=np.float32),
+            "base_k_cache": np.zeros((1, 1, 1, 0, 1), dtype=np.float32),
+            "base_v_cache": np.zeros((1, 1, 1, 0, 1), dtype=np.float32),
             "base_cache_length": np.array([0], dtype=np.int64),
-            "residual_k_cache": np.zeros((1, 1, 1, 1), dtype=np.float32),
-            "residual_v_cache": np.zeros((1, 1, 1, 1), dtype=np.float32),
+            "residual_k_cache": np.zeros((1, 1, 1, 0, 1), dtype=np.float32),
+            "residual_v_cache": np.zeros((1, 1, 1, 0, 1), dtype=np.float32),
             "residual_cache_length": np.array([0], dtype=np.int64),
         }
         return [values[name] for name in output_names]
@@ -71,12 +71,12 @@ class _FakeSessions:
             "next_lm_hidden": inputs["lm_hidden"],
             "next_residual_hidden": inputs["residual_hidden"],
             "next_prefix_feat_cond": inputs["prefix_feat_cond"],
-            "next_base_k_cache": inputs["base_k_cache"],
-            "next_base_v_cache": inputs["base_v_cache"],
-            "next_base_cache_length": inputs["base_cache_length"],
-            "next_residual_k_cache": inputs["residual_k_cache"],
-            "next_residual_v_cache": inputs["residual_v_cache"],
-            "next_residual_cache_length": inputs["residual_cache_length"],
+            "base_k_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
+            "base_v_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
+            "next_base_current_length": inputs["base_current_length"] + 1,
+            "residual_k_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
+            "residual_v_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
+            "next_residual_current_length": inputs["residual_current_length"] + 1,
         }
         return [values[name] for name in output_names]
 

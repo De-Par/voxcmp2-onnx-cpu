@@ -47,6 +47,7 @@ Streaming is deferred to v2 and must not shape the v1 export contract.
 - Preserve the reference-audio path used by cloning modes.
 - Export both FP32 and BF16 production artifact families.
 - Keep FP32 and BF16 graph structures aligned: same module boundaries, input names, output names, ranks, dynamic axes, and cache/state semantics.
+- Use the fixed-capacity decode cache contract from `docs/decode_state_contract.md`; do not reintroduce grow-by-concat cache outputs.
 - Treat FP32 as the correctness anchor and BF16 as a production target with explicit quality and performance gates.
 - Production BF16 must minimize unnecessary `Cast`/`CastLike` nodes and dtype churn.
 - Use mixed precision only where required for correctness, numerical stability, or ONNX Runtime CPU kernel support.
@@ -108,7 +109,7 @@ Module-level exports are also available:
 python -B src/export/export_audio_vae_encoder.py --precision fp32
 python -B src/export/export_audio_vae_decoder.py --precision fp32
 python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
-python -B src/export/export_decode_step.py --precision fp32 --cache-seq 16
+python -B src/export/export_decode_step.py --precision fp32 --current-length 16 --max-cache-seq 64
 ```
 
 ## Non-Goals

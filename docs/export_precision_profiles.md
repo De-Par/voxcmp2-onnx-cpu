@@ -100,7 +100,7 @@ Export one module:
 python -B src/export/export_audio_vae_encoder.py --precision fp32
 python -B src/export/export_audio_vae_decoder.py --precision fp32
 python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
-python -B src/export/export_decode_step.py --precision fp32 --cache-seq 16
+python -B src/export/export_decode_step.py --precision fp32 --current-length 16 --max-cache-seq 64
 ```
 
 Use `--precision bf16` for the BF16 artifact family. If `--output` is omitted, each script writes to `models/onnx/<precision>/<module>/...`.

@@ -18,10 +18,10 @@ INPUT_NAMES = [
     "prefix_feat_cond",
     "base_k_cache",
     "base_v_cache",
-    "base_cache_length",
+    "base_current_length",
     "residual_k_cache",
     "residual_v_cache",
-    "residual_cache_length",
+    "residual_current_length",
     "diffusion_noise",
     "cfg_value",
 ]
@@ -32,12 +32,12 @@ OUTPUT_NAMES = [
     "next_lm_hidden",
     "next_residual_hidden",
     "next_prefix_feat_cond",
-    "next_base_k_cache",
-    "next_base_v_cache",
-    "next_base_cache_length",
-    "next_residual_k_cache",
-    "next_residual_v_cache",
-    "next_residual_cache_length",
+    "base_k_update",
+    "base_v_update",
+    "next_base_current_length",
+    "residual_k_update",
+    "residual_v_update",
+    "next_residual_current_length",
 ]
 
 
@@ -68,6 +68,8 @@ def _io_report(model_path: Path) -> dict[str, Any]:
 def _make_inputs(args: argparse.Namespace) -> dict[str, np.ndarray]:
     if args.cache_seq < 1:
         raise ValueError("--cache-seq must be >= 1")
+    if args.max_cache_seq <= args.cache_seq:
+        raise ValueError("--max-cache-seq must be greater than --cache-seq")
 
     rng = np.random.default_rng(args.seed)
     return {
@@ -75,23 +77,23 @@ def _make_inputs(args: argparse.Namespace) -> dict[str, np.ndarray]:
         "residual_hidden": rng.standard_normal((args.batch_size, args.hidden_size), dtype=np.float32),
         "prefix_feat_cond": rng.standard_normal((args.batch_size, args.patch_size, args.feat_dim), dtype=np.float32),
         "base_k_cache": rng.standard_normal(
-            (args.base_layers, args.batch_size, args.kv_heads, args.cache_seq, args.head_dim),
+            (args.base_layers, args.batch_size, args.kv_heads, args.max_cache_seq, args.head_dim),
             dtype=np.float32,
         ),
         "base_v_cache": rng.standard_normal(
-            (args.base_layers, args.batch_size, args.kv_heads, args.cache_seq, args.head_dim),
+            (args.base_layers, args.batch_size, args.kv_heads, args.max_cache_seq, args.head_dim),
             dtype=np.float32,
         ),
-        "base_cache_length": np.array([args.cache_seq], dtype=np.int64),
+        "base_current_length": np.array([args.cache_seq], dtype=np.int64),
         "residual_k_cache": rng.standard_normal(
-            (args.residual_layers, args.batch_size, args.kv_heads, args.cache_seq, args.head_dim),
+            (args.residual_layers, args.batch_size, args.kv_heads, args.max_cache_seq, args.head_dim),
             dtype=np.float32,
         ),
         "residual_v_cache": rng.standard_normal(
-            (args.residual_layers, args.batch_size, args.kv_heads, args.cache_seq, args.head_dim),
+            (args.residual_layers, args.batch_size, args.kv_heads, args.max_cache_seq, args.head_dim),
             dtype=np.float32,
         ),
-        "residual_cache_length": np.array([args.cache_seq], dtype=np.int64),
+        "residual_current_length": np.array([args.cache_seq], dtype=np.int64),
         "diffusion_noise": rng.standard_normal((args.batch_size, args.feat_dim, args.patch_size), dtype=np.float32),
         "cfg_value": np.array([args.cfg_value], dtype=np.float32),
     }
@@ -136,12 +138,18 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=(
             "Example: python -B src/runtime/run_decode_step_ort.py "
-            "--onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16"
+            "--onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16 --max-cache-seq 64"
         ),
     )
     parser.add_argument("--onnx-path", type=Path, required=True, help="Path to voxcpm2_decode_step.onnx.")
     parser.add_argument("--batch-size", type=int, default=1, help="Synthetic batch size for the ORT run.")
     parser.add_argument("--cache-seq", type=int, default=16, help="Synthetic valid KV-cache length entering the step.")
+    parser.add_argument(
+        "--max-cache-seq",
+        type=int,
+        default=64,
+        help="Synthetic fixed KV-cache capacity entering the step; must exceed --cache-seq.",
+    )
     parser.add_argument("--hidden-size", type=int, default=2048, help="Transformer hidden size expected by the graph.")
     parser.add_argument("--patch-size", type=int, default=4, help="Audio feature patch size expected by the graph.")
     parser.add_argument(

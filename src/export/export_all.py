@@ -68,7 +68,8 @@ def export_all(args: argparse.Namespace) -> None:
         argparse.Namespace(
             **common,
             output=_module_output(args.output_root, "decode_step", precision.name),
-            cache_seq=args.cache_seq,
+            current_length=args.current_length,
+            max_cache_seq=args.max_cache_seq,
             inference_timesteps=args.inference_timesteps,
             cfg_value=args.cfg_value,
             seed=args.seed,
@@ -104,7 +105,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--reference-steps", type=int, default=3, help="Synthetic reference-audio steps.")
     parser.add_argument("--prompt-steps", type=int, default=3, help="Synthetic prompt-audio steps.")
-    parser.add_argument("--cache-seq", type=int, default=16, help="Decode-step example valid KV-cache length.")
+    parser.add_argument("--current-length", type=int, default=16, help="Decode-step example valid KV-cache length.")
+    parser.add_argument(
+        "--max-cache-seq",
+        type=int,
+        default=64,
+        help="Decode-step example fixed KV-cache capacity; must exceed --current-length.",
+    )
     parser.add_argument(
         "--inference-timesteps",
         type=int,

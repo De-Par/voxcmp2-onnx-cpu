@@ -277,7 +277,10 @@ def _run_onnx_case(
     input_build_seconds = time.perf_counter() - input_start
 
     prefill_start = time.perf_counter()
-    state = dict(zip(prefill_outputs, pipeline.sessions.prefill.run(prefill_outputs, sequence), strict=True))
+    state = pipeline._init_fixed_capacity_decode_state(
+        dict(zip(prefill_outputs, pipeline.sessions.prefill.run(prefill_outputs, sequence), strict=True)),
+        max_decode_steps=effective_max_steps,
+    )
     prefill_seconds = time.perf_counter() - prefill_start
 
     rng = np.random.default_rng(seed)
@@ -291,10 +294,10 @@ def _run_onnx_case(
             "prefix_feat_cond": state["prefix_feat_cond"],
             "base_k_cache": state["base_k_cache"],
             "base_v_cache": state["base_v_cache"],
-            "base_cache_length": state["base_cache_length"],
+            "base_current_length": state["base_current_length"],
             "residual_k_cache": state["residual_k_cache"],
             "residual_v_cache": state["residual_v_cache"],
-            "residual_cache_length": state["residual_cache_length"],
+            "residual_current_length": state["residual_current_length"],
             "diffusion_noise": rng.standard_normal(
                 (1, pipeline.config.feat_dim, pipeline.config.patch_size), dtype=np.float32
             ),
@@ -313,17 +316,10 @@ def _run_onnx_case(
             stop_reason = "safety_max_steps" if args.max_steps == 0 else "max_steps"
         if stop_reason is not None:
             break
-        state = {
-            "lm_hidden": outputs["next_lm_hidden"],
-            "residual_hidden": outputs["next_residual_hidden"],
-            "prefix_feat_cond": outputs["next_prefix_feat_cond"],
-            "base_k_cache": outputs["next_base_k_cache"],
-            "base_v_cache": outputs["next_base_v_cache"],
-            "base_cache_length": outputs["next_base_cache_length"],
-            "residual_k_cache": outputs["next_residual_k_cache"],
-            "residual_v_cache": outputs["next_residual_v_cache"],
-            "residual_cache_length": outputs["next_residual_cache_length"],
-        }
+        pipeline._apply_decode_cache_updates(state, outputs)
+        state["lm_hidden"] = outputs["next_lm_hidden"]
+        state["residual_hidden"] = outputs["next_residual_hidden"]
+        state["prefix_feat_cond"] = outputs["next_prefix_feat_cond"]
 
     decoder_start = time.perf_counter()
     feature_seq = np.concatenate(generated, axis=1)
