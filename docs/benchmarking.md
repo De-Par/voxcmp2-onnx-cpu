@@ -1,8 +1,6 @@
-# Benchmarking And Profiling
+# 📊 Benchmarking And Profiling
 
-This page defines the reproducible CPU performance and profiling workflow for the official VoxCPM2 API and the ONNX runtime.
-
-## Rules
+## 📏 Rules
 
 Benchmarking and profiling are measurement-only. They must not change:
 
@@ -13,7 +11,7 @@ Benchmarking and profiling are measurement-only. They must not change:
 - runtime cache/state semantics
 - FP32/BF16 precision policy
 
-## Runtime Tuning Knobs
+## 🎛️ Runtime Tuning Knobs
 
 All options keep `CPUExecutionProvider` only.
 
@@ -37,7 +35,19 @@ inter_op_num_threads=default
 
 The benchmark CLI preloads selected ONNX sessions during the load phase by default. Use `--no-onnx-preload-sessions` only when measuring first-request latency.
 
-## Quick Variant Benchmark
+## ⚡ Quick Variant Benchmark
+
+```mermaid
+flowchart LR
+    A["official API"] --> D["comparison report"]
+    B["ONNX FP32"] --> D
+    C["ONNX BF16"] --> D
+
+    style A fill:#10B981,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#10B981,stroke:#000000,stroke-width:2px,color:#ffffff
+    style D fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+```
 
 Compare official API, ONNX FP32, and ONNX BF16:
 
@@ -68,9 +78,24 @@ python -B src/bench/compare_pipelines.py \
 
 The benchmark prints readable console output and writes JSON. It records WAV path, load time, synthesis time, total time, sample rate, sample count, output duration, peak, RMS, decode steps, and stop reason.
 
-## Production Baseline Matrix
+## 🧪 Production Baseline Matrix
 
 Run the fixed production matrix:
+```mermaid
+flowchart LR
+    A["Benchmark cases"] --> B["official"]
+    A --> C["onnx"]
+    B --> D["baseline.json"]
+    B --> E["baseline.md"]
+    C --> D
+    C --> E
+
+    style A fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+    style D fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
+    style E fill:#DC2626,stroke:#000000,stroke-width:2px,color:#ffffff
+```
 
 ```bash
 python -B tools/bench/run_benchmarks.py \
@@ -124,7 +149,7 @@ python -B tools/bench/run_benchmarks.py \
 
 This smoke intentionally writes truncated audio.
 
-## Profiling Hotspots
+## 🔥 Profiling Hotspots
 
 Run a profiled controllable-clone case:
 
@@ -137,6 +162,18 @@ python -B tools/profile/run_profiled_bench.py \
   --onnx-execution-mode sequential \
   --onnx-intra-op-threads 8 \
   --onnx-inter-op-threads 1
+```
+
+```mermaid
+flowchart LR
+    A["run_profiled_bench.py"] --> B["raw ORT Chrome trace JSON"]
+    A --> C["combined JSON report"]
+    A --> D["Markdown hotspot report"]
+
+    style A fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+    style D fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
 ```
 
 Outputs:
@@ -176,7 +213,7 @@ Code-site mapping:
 | audio encoder | `src/runtime/pipeline.py::VoxCPM2OnnxPipeline._encode_wav` |
 | audio decoder | `src/runtime/pipeline.py::audio_decoder.run` |
 
-## Interpreting ONNX vs Official API Gaps
+## 🧠 Interpreting ONNX vs Official API Gaps
 
 A speed or output-duration mismatch is not automatically a BF16 failure. Known causes:
 
@@ -189,7 +226,7 @@ A speed or output-duration mismatch is not automatically a BF16 failure. Known c
 
 With `--onnx-graph-optimization all`, ORT may warn that it cannot constant-fold `CastLike`. That means the optimizer left the node in the graph; it is not a synthesis failure.
 
-## Acceptance Criteria
+## ✅ Acceptance Criteria
 
 - One command writes JSON and Markdown baseline reports.
 - Baseline includes official API and current ONNX runtime.
