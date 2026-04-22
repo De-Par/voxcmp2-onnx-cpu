@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export all VoxCPM2 ONNX modules for one production precision profile."""
+"""Export all VoxCPM2 ONNX modules for one production precision profile"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _module_output(output_root: Path, module_key: str, precision_name: str) -> P
 
 
 def export_all(args: argparse.Namespace) -> None:
-    """Run the four standalone exporters with one shared precision profile."""
+    """Run the four standalone exporters with one shared precision profile"""
 
     precision = get_precision_profile(args.precision)
     print(f"export_profile={precision.name}")

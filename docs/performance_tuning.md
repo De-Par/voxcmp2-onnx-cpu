@@ -20,9 +20,9 @@ Known causes:
 - The official API runs its model path in the model-configured dtype, commonly BF16 on CPU. The export wrappers currently force FP32 for correctness-first ONNX export.
 - The official loop stops when `i > min_len and stop_flag == 1`. The ONNX host loop stops after the completed-step count reaches `min_steps` and `stop_logits` selects stop.
 - The official API has `retry_badcase=True` by default at the public API layer. The benchmark keeps retries off unless `--orig-retry-badcase` is passed so a retry does not hide the first-pass behavior.
-- The ONNX decode-step graph uses explicit tensor-in/tensor-out K/V caches. This is exportable and inspectable, but it is heavier than the official Python-side mutable cache.
+- The ONNX decode-step graph uses explicit fixed-capacity tensor caches. This is exportable and inspectable, but it is still heavier than the official Python-side mutable cache until ORT I/O binding and cache residency are implemented.
 
-The current BF16 artifacts are also not a full production BF16 compute runtime. `src/experiments/bf16_feasibility.py` converts selected FLOAT initializers to BFLOAT16 storage and inserts Cast nodes back to FLOAT. This tests model size and ORT CPU loader coverage while keeping most compute in FP32. The production BF16 target is defined in `docs/precision_strategy.md` and must minimize this Cast churn.
+Production BF16 artifacts must be exported with `src/export/export_all.py --precision bf16`. The legacy `src/experiments/bf16_feasibility.py` tool is storage-only and writes under `artifacts/experiments/bf16_storage_only`; it is not a performance path.
 
 ## Runtime Knobs
 

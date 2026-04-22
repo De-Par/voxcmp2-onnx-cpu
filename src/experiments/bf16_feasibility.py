@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Inspect and optionally create experimental BF16-weight ONNX copies.
+"""Inspect and optionally create legacy BF16-storage ONNX copies.
 
-The production runtime remains FP32. Conversion mode writes separate ONNX files
-that store selected FLOAT initializers as BFLOAT16 and immediately cast them
-back to FLOAT before graph use. That measures storage feasibility and ORT CPU
-loader coverage without changing the FP32 runtime path.
+This tool is not the production BF16 path. Conversion mode stores selected
+FLOAT initializers as BFLOAT16 and immediately casts them back to FLOAT before
+graph use. That measures storage feasibility and ORT CPU loader coverage, but
+it intentionally provides no BF16 compute benefit.
 """
 
 from __future__ import annotations
@@ -26,6 +26,8 @@ from onnx import TensorProto, helper, numpy_helper
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PRODUCTION_BF16_ROOT = (REPO_ROOT / "models" / "onnx" / "bf16").resolve()
+DEFAULT_STORAGE_ONLY_OUTPUT_DIR = Path("artifacts/experiments/bf16_storage_only")
 
 DEFAULT_MODELS = {
     "audio_vae_encoder": REPO_ROOT / "models" / "onnx" / "fp32" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
@@ -309,8 +311,25 @@ def _check_large_model_policy(args: argparse.Namespace) -> None:
         )
 
 
+def _check_storage_only_output_policy(args: argparse.Namespace) -> None:
+    if args.mode != "convert":
+        return
+    output_dir = args.output_dir.expanduser()
+    try:
+        output_resolved = output_dir.resolve()
+    except FileNotFoundError:
+        output_resolved = output_dir.parent.resolve() / output_dir.name
+    if output_resolved == PRODUCTION_BF16_ROOT or output_resolved.is_relative_to(PRODUCTION_BF16_ROOT):
+        raise ValueError(
+            "Refusing to write storage-only BF16 conversion into production models/onnx/bf16. "
+            "Use src/export/export_all.py --precision bf16 for production BF16 compute artifacts, "
+            "or choose an artifacts/experiments output directory for this legacy feasibility tool."
+        )
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     _check_large_model_policy(args)
+    _check_storage_only_output_policy(args)
     targets = _default_targets(args.models)
     report_json = _default_report_json(args)
     report: dict[str, Any] = {
@@ -382,7 +401,7 @@ def _print_success(report: dict[str, Any]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Analyze VoxCPM2 ONNX BF16 feasibility without touching the FP32 runtime.",
+        description="Analyze legacy storage-only BF16 feasibility without touching production BF16 compute exports.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -401,8 +420,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("models/onnx/bf16"),
-        help="Directory for converted experimental ONNX artifacts.",
+        default=DEFAULT_STORAGE_ONLY_OUTPUT_DIR,
+        help="Directory for converted storage-only experiment artifacts; production BF16 uses export_all.py.",
     )
     parser.add_argument(
         "--report-json", type=Path, help="JSON report output path. Defaults to artifacts/reports/bf16_feasibility."

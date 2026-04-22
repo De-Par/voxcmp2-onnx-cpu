@@ -1,4 +1,4 @@
-"""Shared ONNX export contracts and precision-profile helpers."""
+"""Shared ONNX export contracts and precision-profile helpers"""
 
 from __future__ import annotations
 
@@ -29,6 +29,8 @@ class PrecisionProfile:
     compute_dtype: str
     host_float_dtype: str
     model_config_dtype: str
+    production_compute: bool
+    storage_only: bool
     description: str
 
     def torch_compute_dtype(self):
@@ -48,6 +50,8 @@ PRECISION_PROFILES: dict[PrecisionName, PrecisionProfile] = {
         compute_dtype="float32",
         host_float_dtype="float32",
         model_config_dtype="float32",
+        production_compute=True,
+        storage_only=False,
         description="Production correctness anchor with FP32 model compute and FP32 public tensor contract.",
     ),
     "bf16": PrecisionProfile(
@@ -55,8 +59,63 @@ PRECISION_PROFILES: dict[PrecisionName, PrecisionProfile] = {
         compute_dtype="bfloat16",
         host_float_dtype="float32",
         model_config_dtype="bfloat16",
+        production_compute=True,
+        storage_only=False,
         description=(
-            "Production BF16 target with BF16 model compute and the same FP32 public tensor contract as FP32."
+            "Production BF16 compute target with BF16 weights/activations where feasible and the same runtime path."
+        ),
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ModulePrecisionPolicy:
+    """BF16 compute regions and intentional FP32 islands for one module"""
+
+    bf16_compute_regions: tuple[str, ...]
+    fp32_islands: tuple[str, ...]
+    boundary_casts: tuple[str, ...]
+
+
+BF16_MODULE_POLICIES: dict[str, ModulePrecisionPolicy] = {
+    "audio_vae_encoder": ModulePrecisionPolicy(
+        bf16_compute_regions=("AudioVAE encoder convolution/residual stack",),
+        fp32_islands=(),
+        boundary_casts=("waveform fp32->bf16", "latent bf16->fp32"),
+    ),
+    "audio_vae_decoder": ModulePrecisionPolicy(
+        bf16_compute_regions=("AudioVAE decoder convolution/residual stack",),
+        fp32_islands=(),
+        boundary_casts=("latent fp32->bf16", "waveform bf16->fp32"),
+    ),
+    "prefill": ModulePrecisionPolicy(
+        bf16_compute_regions=(
+            "feature encoder",
+            "text embeddings",
+            "base LM prefill",
+            "FSQ/fusion projection",
+            "residual LM prefill",
+        ),
+        fp32_islands=(),
+        boundary_casts=(
+            "text/audio masks fp32->bf16",
+            "audio features fp32->bf16",
+            "hidden/cache outputs bf16->fp32",
+        ),
+    ),
+    "decode_step": ModulePrecisionPolicy(
+        bf16_compute_regions=(
+            "DiT conditioning projections",
+            "LocDiT/CFM solve",
+            "feature encoder",
+            "base LM decode step",
+            "residual LM decode step",
+            "stop head",
+        ),
+        fp32_islands=("rotary position embedding multiply/add",),
+        boundary_casts=(
+            "hidden/cache/noise/cfg fp32->bf16",
+            "feature/hidden/cache-update outputs bf16->fp32",
         ),
     ),
 }
@@ -64,7 +123,7 @@ PRECISION_PROFILES: dict[PrecisionName, PrecisionProfile] = {
 
 @dataclass(frozen=True)
 class ModuleOutputLayout:
-    """Default artifact location for one exported module."""
+    """Default artifact location for one exported module"""
 
     directory: str
     filename: str
@@ -80,7 +139,7 @@ MODULE_OUTPUT_LAYOUTS: dict[str, ModuleOutputLayout] = {
 
 @dataclass(frozen=True)
 class ModuleExportContract:
-    """Stable public graph contract shared by FP32 and BF16 artifacts."""
+    """Stable public graph contract shared by FP32 and BF16 artifacts"""
 
     module_key: str
     display_name: str
@@ -193,18 +252,35 @@ def ensure_output_dir(path: Path) -> None:
 
 
 def configure_module_precision(module: Any, precision: PrecisionProfile) -> Any:
+    if precision.storage_only:
+        raise ValueError("storage-only precision profiles are not valid production export profiles")
     return module.to(device="cpu", dtype=precision.torch_compute_dtype()).eval()
 
 
-def add_precision_metadata(report: dict[str, Any], precision: PrecisionProfile) -> dict[str, Any]:
+def add_precision_metadata(
+    report: dict[str, Any],
+    precision: PrecisionProfile,
+    *,
+    module_key: str | None = None,
+) -> dict[str, Any]:
     enriched = deepcopy(report)
     enriched["precision_profile"] = {
         "name": precision.name,
         "compute_dtype": precision.compute_dtype,
         "host_float_dtype": precision.host_float_dtype,
         "model_config_dtype": precision.model_config_dtype,
+        "production_compute": precision.production_compute,
+        "storage_only": precision.storage_only,
         "boundary_policy": "host_float32_contract_with_profile_compute_dtype",
     }
+    if module_key is not None and precision.name == "bf16":
+        module_policy = BF16_MODULE_POLICIES[module_key]
+        enriched["bf16_compute_policy"] = {
+            "bf16_compute_regions": list(module_policy.bf16_compute_regions),
+            "fp32_islands": list(module_policy.fp32_islands),
+            "boundary_casts": list(module_policy.boundary_casts),
+            "forbidden_pattern": "BF16 initializer immediately cast back to FLOAT as the primary compute path",
+        }
     return enriched
 
 
@@ -223,7 +299,10 @@ def print_export_plan(
     print(f"host_float_dtype={precision.host_float_dtype}")
     print("input_names=" + ",".join(input_names))
     print("output_names=" + ",".join(output_names))
-    print("shape_report=" + json.dumps(add_precision_metadata(shape_report, precision), sort_keys=True))
+    print(
+        "shape_report="
+        + json.dumps(add_precision_metadata(shape_report, precision, module_key=module_key), sort_keys=True)
+    )
     print(f"output_path={output_path}")
 
 

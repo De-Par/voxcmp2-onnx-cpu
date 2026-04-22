@@ -181,10 +181,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Export VoxCPM2 AudioVAE decoder to a standalone ONNX graph.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        epilog=(
-            "Example: python -B src/export/export_audio_vae_decoder.py "
-            "--precision fp32"
-        ),
+        epilog=("Example: python -B src/export/export_audio_vae_decoder.py --precision fp32"),
     )
     parser.add_argument(
         "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."

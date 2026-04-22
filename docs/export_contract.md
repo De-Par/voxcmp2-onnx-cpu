@@ -49,6 +49,7 @@ Streaming is deferred to v2 and must not shape the v1 export contract.
 - Keep FP32 and BF16 graph structures aligned: same module boundaries, input names, output names, ranks, dynamic axes, and cache/state semantics.
 - Use the fixed-capacity decode cache contract from `docs/decode_state_contract.md`; do not reintroduce grow-by-concat cache outputs.
 - Treat FP32 as the correctness anchor and BF16 as a production target with explicit quality and performance gates.
+- Treat BF16 as a compute profile per `docs/bf16_compute_strategy.md`; storage-only initializer conversion is not a production route.
 - Production BF16 must minimize unnecessary `Cast`/`CastLike` nodes and dtype churn.
 - Use mixed precision only where required for correctness, numerical stability, or ONNX Runtime CPU kernel support.
 - Do not simplify model math unless the blocker and behavior change are documented before the change.

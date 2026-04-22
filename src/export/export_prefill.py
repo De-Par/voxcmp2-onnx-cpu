@@ -365,10 +365,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Export the VoxCPM2 prefill neural boundary to ONNX.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        epilog=(
-            "Example: python -B src/export/export_prefill.py "
-            "--precision fp32 --mode plain_tts"
-        ),
+        epilog=("Example: python -B src/export/export_prefill.py --precision fp32 --mode plain_tts"),
     )
     parser.add_argument(
         "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."

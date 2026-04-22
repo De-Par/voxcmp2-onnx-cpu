@@ -87,7 +87,9 @@ class VoxCPM2DecodeStepOutputs(TypedDict):
     residual_cache_update: TransformerCacheUpdateSpec
 
 
-def _cache(prefix: str, layers: str, *, seq_label: str = "cache_seq", length_name: str | None = None) -> TransformerCacheSpec:
+def _cache(
+    prefix: str, layers: str, *, seq_label: str = "cache_seq", length_name: str | None = None
+) -> TransformerCacheSpec:
     length_tensor_name = length_name or f"{prefix}_cache_length"
     return {
         "key": TensorSpec(

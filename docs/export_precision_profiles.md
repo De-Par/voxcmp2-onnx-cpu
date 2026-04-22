@@ -62,9 +62,13 @@ Host-visible floating tensors remain `float32` for both profiles in the current 
 
 - model compute dtype: `bfloat16`
 - host-visible floating dtype: `float32`
-- role: production BF16 target
+- role: production BF16 compute target
+- storage-only: `false`
+- production compute: `true`
 
 BF16 is not the old storage-only experiment. The production BF16 export path must minimize `Cast` and `CastLike` churn. Boundary casts caused by the shared FP32 host-visible contract are allowed, but they must remain explicit and measurable.
+
+Per-module BF16 compute regions and FP32 islands are listed in `docs/bf16_compute_strategy.md` and exported in shape-report metadata.
 
 Mixed precision is allowed only for:
 
@@ -119,4 +123,5 @@ Use `--precision bf16` for the BF16 artifact family. If `--output` is omitted, e
 - Every exporter accepts `--precision {fp32,bf16}`.
 - `export_all.py` can export one complete artifact family with a single command.
 - FP32 and BF16 public graph contracts match.
+- BF16 profile is a real compute profile, not a BF16-initializer storage copy with immediate FLOAT casts.
 - Any BF16 blocker is documented before changing model math.

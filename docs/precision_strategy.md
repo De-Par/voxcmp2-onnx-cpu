@@ -17,7 +17,7 @@ FP32 and BF16 are both production targets.
 
 FP32 remains the correctness anchor and the first artifact family that must pass parity, smoke, profiling, and benchmark checks. BF16 is not a replacement for FP32; it is a second production artifact family with the same feature coverage and the same host runtime contract.
 
-The current BF16 initializer-copy experiment is not the final production BF16 strategy. It stores selected weights as BF16 and casts them back to FP32 before use. That was useful for storage and ORT loader feasibility, but a production BF16 graph must minimize unnecessary `Cast` nodes and dtype churn.
+The current BF16 initializer-copy experiment is not the production BF16 strategy. It stores selected weights as BF16 and casts them back to FP32 before use. That was useful for storage and ORT loader feasibility, but production BF16 is now defined as a real compute path in `docs/bf16_compute_strategy.md`.
 
 ## Artifact Families
 

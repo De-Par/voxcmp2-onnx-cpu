@@ -320,7 +320,7 @@ class VoxCPM2OnnxPipeline:
         *,
         max_decode_steps: int,
     ) -> dict[str, np.ndarray]:
-        """Allocate fixed-capacity KV caches once for the host decode loop."""
+        """Allocate fixed-capacity KV caches once for the host decode loop"""
 
         base_current_length = prefill_state["base_cache_length"].astype(np.int64, copy=False)
         residual_current_length = prefill_state["residual_cache_length"].astype(np.int64, copy=False)
@@ -346,7 +346,7 @@ class VoxCPM2OnnxPipeline:
 
     @staticmethod
     def _apply_decode_cache_updates(state: dict[str, np.ndarray], outputs: dict[str, np.ndarray]) -> None:
-        """Apply one-position K/V updates returned by the fixed-cache graph."""
+        """Apply one-position K/V updates returned by the fixed-cache graph"""
 
         base_index = int(state["base_current_length"][0])
         residual_index = int(state["residual_current_length"][0])
