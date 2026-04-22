@@ -1,8 +1,6 @@
-# Architecture And Runtime Contract
+# 🏗️ Architecture And Runtime Contract
 
-This page is the runtime architecture contract for the VoxCPM2 CPU-only ONNX port.
-
-## Scope
+## 🎯 Scope
 
 - Model: VoxCPM2.
 - Runtime: ONNX Runtime `CPUExecutionProvider` only.
@@ -12,7 +10,7 @@ This page is the runtime architecture contract for the VoxCPM2 CPU-only ONNX por
 
 "Fully ONNX" means every neural module needed by the supported modes is exported to ONNX. Text normalization, tokenization, WAV I/O, resampling, random noise creation, orchestration, stop policy, and WAV writing remain host code.
 
-## Feature Matrix
+## 📋 Feature Matrix
 
 | Feature | V1 status | Requirement |
 |---|---|---|
@@ -28,17 +26,24 @@ This page is the runtime architecture contract for the VoxCPM2 CPU-only ONNX por
 | GPU/CoreML/CUDA/DirectML/MPS | non-goal | CPU provider only. |
 | Single merged ONNX graph | non-goal | Keep module boundaries separate. |
 
-## Official Generate Path
+## 🧭 Official Generate Path
 
 The traced official path is:
 
-```text
-VoxCPM.generate()
-  -> VoxCPM._generate()
-  -> optional VoxCPM2Model.build_prompt_cache()
-  -> VoxCPM2Model._generate_with_prompt_cache()
-  -> VoxCPM2Model._inference()
-  -> AudioVAEV2.decode()
+```mermaid
+flowchart TD
+    A["VoxCPM.generate()"] --> B["VoxCPM._generate()"]
+    B --> C["optional VoxCPM2Model.build_prompt_cache()"]
+    C --> D["VoxCPM2Model._generate_with_prompt_cache()"]
+    D --> E["VoxCPM2Model._inference()"]
+    E --> F["AudioVAEV2.decode()"]
+
+    style A fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+    style D fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
+    style E fill:#DC2626,stroke:#000000,stroke-width:2px,color:#ffffff
+    style F fill:#7C3AED,stroke:#000000,stroke-width:2px,color:#ffffff
 ```
 
 Mode mapping:
@@ -60,9 +65,29 @@ python -B src/parity/trace_generate.py \
 
 Trace output is compact JSONL with stage names, Python module/function names, shapes, dtypes, and reference/prompt path flags. Full tensor values are never logged.
 
-## Module Boundaries
+## 🧩 Module Boundaries
 
 The runtime uses four separate ONNX sessions.
+```mermaid
+flowchart LR
+    H["🧭 Host orchestration<br/>text normalization · tokenizer · WAV I/O · resampling · stop policy · random noise"]
+    E["🎧 AudioVAEEncoder"]
+    P["🧠 VoxCPM2Prefill"]
+    D["🔁 VoxCPM2DecodeChunk"]
+    W["🔊 AudioVAEDecoder"]
+
+    H --> E
+    H --> P
+    P --> D
+    D --> W
+    H -. owns loop and cache mutation .-> D
+
+    style H fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
+    style E fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style P fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+    style D fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
+    style W fill:#DC2626,stroke:#000000,stroke-width:2px,color:#ffffff
+```
 
 ### `AudioVAEEncoder`
 
@@ -135,36 +160,47 @@ Purpose: generated latent feature sequence to waveform.
 
 For non-streaming v1, host concatenates generated features and calls the decoder once.
 
-## Fixed-Capacity Decode Cache
+## 🗃️ Fixed-Capacity Decode Cache
 
 The old experimental decode-step contract grew cache tensors every step:
 
-```text
-cache_seq -> cache_seq + 1 -> cache_seq + 2
+```mermaid
+flowchart LR
+    A["cache_seq"] --> B["cache_seq + 1"] --> C["cache_seq + 2"]
+
+    style A fill:#DC2626,stroke:#ffffff,stroke-width:2px,color:#ffffff
+    style B fill:#DC2626,stroke:#ffffff,stroke-width:2px,color:#ffffff
+    style C fill:#DC2626,stroke:#ffffff,stroke-width:2px,color:#ffffff
 ```
 
 The production contract uses fixed-capacity tensors:
 
-```text
-max_cache_seq = prefill_length + effective_max_decode_steps
+```mermaid
+flowchart LR
+    A["prefill_length"] --> C["max_cache_seq = prefill_length + effective_max_decode_steps"]
+    B["effective_max_decode_steps"] --> C
+
+    style A fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style B fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+    style C fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
 ```
 
 Input cache shapes:
 
 ```text
-base_k_cache:     [base_layers, batch, kv_heads, max_cache_seq, head_dim]
-base_v_cache:     [base_layers, batch, kv_heads, max_cache_seq, head_dim]
-residual_k_cache: [residual_layers, batch, kv_heads, max_cache_seq, head_dim]
-residual_v_cache: [residual_layers, batch, kv_heads, max_cache_seq, head_dim]
+base_k_cache     : [base_layers, batch, kv_heads, max_cache_seq, head_dim]
+base_v_cache     : [base_layers, batch, kv_heads, max_cache_seq, head_dim]
+residual_k_cache : [residual_layers, batch, kv_heads, max_cache_seq, head_dim]
+residual_v_cache : [residual_layers, batch, kv_heads, max_cache_seq, head_dim]
 ```
 
 Production decode-chunk output update shapes:
 
 ```text
-base_k_update:     [base_layers, batch, kv_heads, chunk_size, head_dim]
-base_v_update:     [base_layers, batch, kv_heads, chunk_size, head_dim]
-residual_k_update: [residual_layers, batch, kv_heads, chunk_size, head_dim]
-residual_v_update: [residual_layers, batch, kv_heads, chunk_size, head_dim]
+base_k_update     : [base_layers, batch, kv_heads, chunk_size, head_dim]
+base_v_update     : [base_layers, batch, kv_heads, chunk_size, head_dim]
+residual_k_update : [residual_layers, batch, kv_heads, chunk_size, head_dim]
+residual_v_update : [residual_layers, batch, kv_heads, chunk_size, head_dim]
 ```
 
 Host update rule:
@@ -178,7 +214,7 @@ residual_v_cache[:, :, :, residual_current_length:residual_current_length + acce
 
 The traffic goal is to remove output-cache growth and amortize Python/ORT session boundary overhead. Old grow-by-concat output payload per step was `2 * K * (S + 1)`. The chunked fixed-cache payload per session is `2 * K * chunk_size`, where `K = (base_layers + residual_layers) * batch * kv_heads * head_dim`.
 
-## Runtime Rules
+## 🛡️ Runtime Rules
 
 - Use only `CPUExecutionProvider`.
 - Do not fall back to CUDA, CoreML, DirectML, MPS, or any accelerator provider.
@@ -189,7 +225,7 @@ The traffic goal is to remove output-cache growth and amortize Python/ORT sessio
 - Do not insert silent runtime precision conversions.
 - FP32 and BF16 select different artifact paths, not different runtime semantics.
 
-## Runtime Dependency Audit
+## 🔎 Runtime Dependency Audit
 
 Runtime path:
 
@@ -214,7 +250,7 @@ rg -n "\btorch\b|import torch|from torch|soundfile|librosa|transformers" src/run
 
 Expected result: no runtime dependency imports. Provider names may appear only in explicit forbidden-provider validation.
 
-## Platform Signoff
+## 🖥️ Platform Signoff
 
 For each target platform class, run:
 
@@ -231,7 +267,7 @@ Expected results:
 - CLI writes a WAV file
 - every ORT session reports only `CPUExecutionProvider`
 
-## Acceptance Criteria
+## ✅ Acceptance Criteria
 
 - Every required mode maps to export and runtime orchestration requirements.
 - Host/ONNX boundaries match `src/contracts/module_schemas.py`.
