@@ -34,7 +34,7 @@ REPORT.md        Trace-based call map and ONNX boundary rationale
 Ignored local state is split by purpose:
 
 - `models/onnx/fp32/`: production FP32 ONNX exports and external data.
-- `models/onnx/bf16/`: production-target BF16 ONNX exports and external data. Current storage-only BF16 copies are transitional artifacts, not the final BF16 strategy.
+- `models/onnx/bf16/`: production BF16 compute ONNX exports and external data. Storage-only BF16 experiments live under `artifacts/experiments/`.
 - `models/hf/`: optional local Hugging Face snapshots if you do not use the default cache.
 - `artifacts/`: reports, logs, benchmark WAV/JSON, and smoke output samples.
 - `traces/`: generate-path JSONL traces.
@@ -121,22 +121,31 @@ To force scripts to download missing files, pass `--allow-download` where availa
 
 ## Export ONNX Modules
 
-Run exports in this order:
+Export one complete precision family with the unified export pipeline:
 
 ```bash
-python -B src/export/export_audio_vae_encoder.py --output models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
-python -B src/export/export_audio_vae_decoder.py --output models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
-python -B src/export/export_prefill.py --output models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/export/export_decode_step.py --output models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16
+python -B src/export/export_all.py --precision fp32
+python -B src/export/export_all.py --precision bf16
 ```
 
 All exports use:
 
 - `torch.onnx.export(..., dynamo=True)`
 - `external_data=True`
-- FP32 model weights and synthetic inputs
+- the shared precision profiles in `src/export/common.py`
 - no graph optimization
 - no quantization
+
+Module-level exports are also available:
+
+```bash
+python -B src/export/export_audio_vae_encoder.py --precision fp32
+python -B src/export/export_audio_vae_decoder.py --precision fp32
+python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
+python -B src/export/export_decode_step.py --precision fp32 --current-length 16 --max-cache-seq 64
+```
+
+Pass `--precision bf16` to write the BF16 artifact family under `models/onnx/bf16`.
 
 Large ONNX external data files must remain next to their `.onnx` files.
 
@@ -148,7 +157,7 @@ Run path-based ONNX checker and one CPU ORT invocation per module:
 python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
+python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16 --max-cache-seq 64
 ```
 
 Each checker prints input names, output names, dtype, dynamic/static dimensions, CPU provider list, and compact output statistics.
@@ -161,7 +170,7 @@ Parity scripts compare the PyTorch export wrapper against ONNX Runtime CPU:
 python -B tests/parity/test_audio_vae_encoder.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 python -B tests/parity/test_audio_vae_decoder.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 python -B tests/parity/test_prefill.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx
-python -B tests/parity/test_decode_step.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
+python -B tests/parity/test_decode_step.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --precision fp32 --cache-seq 16 --max-cache-seq 64
 ```
 
 PyTest wrappers are also available through environment variables:
@@ -231,7 +240,7 @@ Defaults stay conservative for parity work: graph optimizations disabled, sequen
 
 ## Benchmark Variants
 
-Compare the official VoxCPM2 API, ONNX FP32, and experimental ONNX BF16 artifacts:
+Compare the official VoxCPM2 API, ONNX FP32, and ONNX BF16 compute artifacts:
 
 ```bash
 python -B src/bench/compare_pipelines.py \
@@ -318,11 +327,14 @@ Trace records are compact JSONL events with stage name, input/output shapes, dty
 - [docs/runtime_contract.md](docs/runtime_contract.md): runtime responsibilities and CPU-only constraints.
 - [docs/feature_matrix.md](docs/feature_matrix.md): v1 feature status and deferred work.
 - [docs/precision_strategy.md](docs/precision_strategy.md): production FP32/BF16 policy and final acceptance criteria.
+- [docs/export_precision_profiles.md](docs/export_precision_profiles.md): shared FP32/BF16 export profiles and one-command export workflow.
+- [docs/bf16_compute_strategy.md](docs/bf16_compute_strategy.md): production BF16 compute regions, FP32 islands, and anti-storage-only checks.
 - [docs/module_boundaries.md](docs/module_boundaries.md): module split and tensor boundaries.
 - [docs/decode_state_contract.md](docs/decode_state_contract.md): explicit decode-step state and cache contract.
+- [docs/fixed_cache_report.md](docs/fixed_cache_report.md): fixed-capacity decode cache change, traffic formulas, and measurement gate.
 - [docs/prefill_blockers.md](docs/prefill_blockers.md): prefill export boundary, mode inputs, and blockers.
 - [docs/audio_vae_encoder_onnx_report.md](docs/audio_vae_encoder_onnx_report.md): encoder blocker isolation and parity notes.
-- [docs/bf16_feasibility.md](docs/bf16_feasibility.md): experimental BF16 initializer-size analysis and rollback rules.
+- [docs/bf16_feasibility.md](docs/bf16_feasibility.md): legacy storage-only BF16 initializer-size analysis and rollback rules.
 - [docs/performance_tuning.md](docs/performance_tuning.md): ONNX-vs-origin benchmark interpretation and CPU ORT tuning flags.
 - [docs/perf_baseline.md](docs/perf_baseline.md): fixed production baseline matrix and reporting contract.
 - [docs/profile_hotspots.md](docs/profile_hotspots.md): ORT profiling workflow and hotspot report contract.
