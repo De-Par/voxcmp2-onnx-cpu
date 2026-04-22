@@ -2,13 +2,20 @@
 
 This repository is a CPU-only ONNX Runtime porting workspace for VoxCPM2. It keeps VoxCPM2 neural modules in separate ONNX graphs and keeps host responsibilities, such as tokenization, WAV I/O, resampling, and decode orchestration, in Python.
 
-The goal is FP32 correctness first on:
+The production goal is dual precision:
+
+- optimized FP32 ONNX artifacts
+- optimized BF16 ONNX artifacts
+- one CPU-only production runtime path for both artifact families
+- quality and CPU performance comparison against the official VoxCPM2 API
+
+Target platforms:
 
 - macOS arm64
 - Linux x86_64 / arm64
 - Windows x86_64 / arm64
 
-GPU, CoreML, DirectML, CUDA, quantization, BF16, streaming, and a single monolithic ONNX graph are out of scope for v1.
+GPU, CoreML, DirectML, CUDA, quantization, streaming, and a single monolithic ONNX graph are out of scope for v1.
 
 ## Repository Layout
 
@@ -27,7 +34,7 @@ REPORT.md        Trace-based call map and ONNX boundary rationale
 Ignored local state is split by purpose:
 
 - `models/onnx/fp32/`: production FP32 ONNX exports and external data.
-- `models/onnx/bf16/`: experimental BF16-initializer ONNX copies.
+- `models/onnx/bf16/`: production-target BF16 ONNX exports and external data. Current storage-only BF16 copies are transitional artifacts, not the final BF16 strategy.
 - `models/hf/`: optional local Hugging Face snapshots if you do not use the default cache.
 - `artifacts/`: reports, logs, benchmark WAV/JSON, and smoke output samples.
 - `traces/`: generate-path JSONL traces.
@@ -266,6 +273,30 @@ python -B src/bench/compare_pipelines.py \
 
 See [docs/performance_tuning.md](docs/performance_tuning.md) for interpretation of ONNX-vs-origin benchmark gaps and tuning guidance.
 
+For the stricter production baseline matrix, use:
+
+```bash
+python -B tools/bench/run_benchmarks.py \
+  --output-dir artifacts/perf_baseline \
+  --json-report artifacts/perf_baseline/baseline.json \
+  --markdown-report artifacts/perf_baseline/baseline.md \
+  --variants official onnx \
+  --repeats 3
+```
+
+See [docs/perf_baseline.md](docs/perf_baseline.md) for the fixed case matrix and metric definitions.
+
+For ORT node-level profiling:
+
+```bash
+python -B tools/profile/run_profiled_bench.py \
+  --output-dir artifacts/profile \
+  --cases controllable_clone_short \
+  --top-n 20
+```
+
+See [docs/profile_hotspots.md](docs/profile_hotspots.md) for profile parsing and hotspot report details.
+
 ## Trace Official Generate Path
 
 Use the trace tool before changing module boundaries:
@@ -286,12 +317,15 @@ Trace records are compact JSONL events with stage name, input/output shapes, dty
 - [docs/export_contract.md](docs/export_contract.md): export scope, rules, acceptance criteria, and non-goals.
 - [docs/runtime_contract.md](docs/runtime_contract.md): runtime responsibilities and CPU-only constraints.
 - [docs/feature_matrix.md](docs/feature_matrix.md): v1 feature status and deferred work.
+- [docs/precision_strategy.md](docs/precision_strategy.md): production FP32/BF16 policy and final acceptance criteria.
 - [docs/module_boundaries.md](docs/module_boundaries.md): module split and tensor boundaries.
 - [docs/decode_state_contract.md](docs/decode_state_contract.md): explicit decode-step state and cache contract.
 - [docs/prefill_blockers.md](docs/prefill_blockers.md): prefill export boundary, mode inputs, and blockers.
 - [docs/audio_vae_encoder_onnx_report.md](docs/audio_vae_encoder_onnx_report.md): encoder blocker isolation and parity notes.
 - [docs/bf16_feasibility.md](docs/bf16_feasibility.md): experimental BF16 initializer-size analysis and rollback rules.
 - [docs/performance_tuning.md](docs/performance_tuning.md): ONNX-vs-origin benchmark interpretation and CPU ORT tuning flags.
+- [docs/perf_baseline.md](docs/perf_baseline.md): fixed production baseline matrix and reporting contract.
+- [docs/profile_hotspots.md](docs/profile_hotspots.md): ORT profiling workflow and hotspot report contract.
 - [docs/torch_dependency_audit.md](docs/torch_dependency_audit.md): runtime PyTorch dependency audit.
 - [docs/platform_support.md](docs/platform_support.md): platform matrix and verification commands.
 
