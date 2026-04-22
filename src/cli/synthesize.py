@@ -21,13 +21,18 @@ def _runtime_classes():
     _ensure_repo_root_on_path()
 
     from src.runtime.pipeline import VoxCPM2OnnxPipeline
-    from src.runtime.session_factory import OnnxModelPaths
+    from src.runtime.session_factory import (
+        EXECUTION_MODE_CHOICES,
+        GRAPH_OPTIMIZATION_CHOICES,
+        LOG_SEVERITY_CHOICES,
+        OnnxModelPaths,
+    )
 
-    return VoxCPM2OnnxPipeline, OnnxModelPaths
+    return VoxCPM2OnnxPipeline, OnnxModelPaths, GRAPH_OPTIMIZATION_CHOICES, EXECUTION_MODE_CHOICES, LOG_SEVERITY_CHOICES
 
 
 def _parser() -> argparse.ArgumentParser:
-    _, OnnxModelPaths = _runtime_classes()
+    _, OnnxModelPaths, graph_optimization_choices, execution_mode_choices, log_severity_choices = _runtime_classes()
     defaults = OnnxModelPaths()
     parser = argparse.ArgumentParser(
         description="Run the VoxCPM2 CPU-only ONNX Runtime synthesis pipeline.",
@@ -77,6 +82,34 @@ def _parser() -> argparse.ArgumentParser:
         "--cfg-value", type=float, default=2.0, help="Classifier-free guidance value passed to decode_step."
     )
     parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for host-supplied diffusion noise.")
+    parser.add_argument(
+        "--ort-graph-optimization",
+        choices=graph_optimization_choices,
+        default="disable",
+        help="ONNX Runtime graph optimization level for all CPU sessions.",
+    )
+    parser.add_argument(
+        "--ort-execution-mode",
+        choices=execution_mode_choices,
+        default="sequential",
+        help="ONNX Runtime execution mode for all CPU sessions.",
+    )
+    parser.add_argument(
+        "--ort-log-severity",
+        choices=log_severity_choices,
+        default="warning",
+        help="Minimum ONNX Runtime log severity emitted by CPU sessions.",
+    )
+    parser.add_argument(
+        "--ort-intra-op-threads",
+        type=int,
+        help="ONNX Runtime intra-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
+    )
+    parser.add_argument(
+        "--ort-inter-op-threads",
+        type=int,
+        help="ONNX Runtime inter-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
+    )
     parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local model files.")
     parser.add_argument(
         "--allow-download", action="store_false", dest="local_files_only", help="Allow Hugging Face downloads."
@@ -86,7 +119,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    VoxCPM2OnnxPipeline, OnnxModelPaths = _runtime_classes()
+    VoxCPM2OnnxPipeline, OnnxModelPaths, _, _, _ = _runtime_classes()
     paths = OnnxModelPaths(
         audio_encoder=args.audio_encoder_onnx,
         audio_decoder=args.audio_decoder_onnx,
@@ -97,6 +130,11 @@ def main() -> int:
         model_path=args.model_path,
         local_files_only=args.local_files_only,
         onnx_paths=paths,
+        graph_optimization_level=args.ort_graph_optimization,
+        execution_mode=args.ort_execution_mode,
+        log_severity_level=args.ort_log_severity,
+        intra_op_num_threads=args.ort_intra_op_threads,
+        inter_op_num_threads=args.ort_inter_op_threads,
     )
     pipeline.validate()
     result = pipeline.synthesize_with_metadata(

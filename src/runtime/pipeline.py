@@ -139,9 +139,21 @@ class VoxCPM2OnnxPipeline:
         model_path: str | Path = "openbmb/VoxCPM2",
         local_files_only: bool = True,
         onnx_paths: OnnxModelPaths | None = None,
+        graph_optimization_level: str = "disable",
+        execution_mode: str = "sequential",
+        log_severity_level: str = "warning",
+        intra_op_num_threads: int | None = None,
+        inter_op_num_threads: int | None = None,
     ) -> "VoxCPM2OnnxPipeline":
         config = VoxCPM2RuntimeConfig(model_path=model_path, local_files_only=local_files_only)
-        sessions = OrtSessionFactory(paths=onnx_paths or OnnxModelPaths())
+        sessions = OrtSessionFactory(
+            paths=onnx_paths or OnnxModelPaths(),
+            graph_optimization_level=graph_optimization_level,
+            execution_mode=execution_mode,
+            log_severity_level=log_severity_level,
+            intra_op_num_threads=intra_op_num_threads,
+            inter_op_num_threads=inter_op_num_threads,
+        )
         return cls(sessions=sessions, config=config)
 
     @property

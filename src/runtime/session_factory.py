@@ -13,6 +13,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ONNX_MODELS_ROOT = REPO_ROOT / "models" / "onnx"
 CPU_PROVIDER = "CPUExecutionProvider"
 FORBIDDEN_PROVIDERS = {"CUDAExecutionProvider", "CoreMLExecutionProvider", "MPSExecutionProvider"}
+GRAPH_OPTIMIZATION_LEVELS = {
+    "disable": ort.GraphOptimizationLevel.ORT_DISABLE_ALL,
+    "basic": ort.GraphOptimizationLevel.ORT_ENABLE_BASIC,
+    "extended": ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED,
+    "all": ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+}
+EXECUTION_MODES = {
+    "sequential": ort.ExecutionMode.ORT_SEQUENTIAL,
+    "parallel": ort.ExecutionMode.ORT_PARALLEL,
+}
+LOG_SEVERITY_LEVELS = {
+    "verbose": 0,
+    "info": 1,
+    "warning": 2,
+    "error": 3,
+    "fatal": 4,
+}
+GRAPH_OPTIMIZATION_CHOICES = tuple(GRAPH_OPTIMIZATION_LEVELS)
+EXECUTION_MODE_CHOICES = tuple(EXECUTION_MODES)
+LOG_SEVERITY_CHOICES = tuple(LOG_SEVERITY_LEVELS)
 
 
 @dataclass(frozen=True)
@@ -42,7 +62,10 @@ class OrtSessionFactory:
     """Create ONNX Runtime sessions lazily and CPU-only"""
 
     paths: OnnxModelPaths = field(default_factory=OnnxModelPaths)
-    disable_graph_optimizations: bool = True
+    disable_graph_optimizations: bool | None = None
+    graph_optimization_level: str = "disable"
+    execution_mode: str = "sequential"
+    log_severity_level: str = "warning"
     intra_op_num_threads: int | None = None
     inter_op_num_threads: int | None = None
     _sessions: dict[str, ort.InferenceSession] = field(default_factory=dict, init=False, repr=False)
@@ -90,13 +113,56 @@ class OrtSessionFactory:
 
     def _session_options(self) -> ort.SessionOptions:
         options = ort.SessionOptions()
-        if self.disable_graph_optimizations:
-            options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
-        if self.intra_op_num_threads is not None:
-            options.intra_op_num_threads = self.intra_op_num_threads
-        if self.inter_op_num_threads is not None:
-            options.inter_op_num_threads = self.inter_op_num_threads
+        graph_optimization_level = self._resolved_graph_optimization_level()
+        try:
+            options.graph_optimization_level = GRAPH_OPTIMIZATION_LEVELS[graph_optimization_level]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported ORT graph optimization level {graph_optimization_level!r}; "
+                f"expected one of {GRAPH_OPTIMIZATION_CHOICES}"
+            ) from exc
+        try:
+            options.execution_mode = EXECUTION_MODES[self.execution_mode]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported ORT execution mode {self.execution_mode!r}; expected one of {EXECUTION_MODE_CHOICES}"
+            ) from exc
+        try:
+            options.log_severity_level = LOG_SEVERITY_LEVELS[self.log_severity_level]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported ORT log severity {self.log_severity_level!r}; expected one of {LOG_SEVERITY_CHOICES}"
+            ) from exc
+        self._set_thread_option(options, "intra_op_num_threads", self.intra_op_num_threads)
+        self._set_thread_option(options, "inter_op_num_threads", self.inter_op_num_threads)
         return options
+
+    def options_summary(self) -> dict[str, int | str | None]:
+        return {
+            "provider": CPU_PROVIDER,
+            "graph_optimization_level": self._resolved_graph_optimization_level(),
+            "execution_mode": self.execution_mode,
+            "log_severity_level": self.log_severity_level,
+            "intra_op_num_threads": self.intra_op_num_threads,
+            "inter_op_num_threads": self.inter_op_num_threads,
+        }
+
+    def _resolved_graph_optimization_level(self) -> str:
+        # Backward-compatible shim for older callers that only passed the
+        # previous boolean flag. New code should use graph_optimization_level.
+        if self.disable_graph_optimizations is True:
+            return "disable"
+        if self.disable_graph_optimizations is False:
+            return "all"
+        return self.graph_optimization_level
+
+    @staticmethod
+    def _set_thread_option(options: ort.SessionOptions, name: str, value: int | None) -> None:
+        if value is None:
+            return
+        if value < 0:
+            raise ValueError(f"{name} must be >= 0; use 0 or omit it for ORT default scheduling")
+        setattr(options, name, value)
 
     def _get(self, name: str, path: Path) -> ort.InferenceSession:
         if name not in self._sessions:

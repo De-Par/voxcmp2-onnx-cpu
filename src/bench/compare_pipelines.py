@@ -48,9 +48,21 @@ def _runtime_classes():
     _ensure_repo_root_on_path()
 
     from src.runtime.pipeline import VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig
-    from src.runtime.session_factory import OnnxModelPaths
+    from src.runtime.session_factory import (
+        EXECUTION_MODE_CHOICES,
+        GRAPH_OPTIMIZATION_CHOICES,
+        LOG_SEVERITY_CHOICES,
+        OnnxModelPaths,
+    )
 
-    return VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig, OnnxModelPaths
+    return (
+        VoxCPM2OnnxPipeline,
+        VoxCPM2RuntimeConfig,
+        OnnxModelPaths,
+        GRAPH_OPTIMIZATION_CHOICES,
+        EXECUTION_MODE_CHOICES,
+        LOG_SEVERITY_CHOICES,
+    )
 
 
 @dataclass(frozen=True)
@@ -154,7 +166,7 @@ def _validate_mode_args(args: argparse.Namespace) -> None:
 
 
 def _onnx_paths(args: argparse.Namespace, variant: Variant):
-    _, _, OnnxModelPaths = _runtime_classes()
+    _, _, OnnxModelPaths, _, _, _ = _runtime_classes()
     defaults = OnnxModelPaths() if variant == "onnx_fp32" else OnnxModelPaths(**BF16_MODEL_PATH_VALUES)
     prefix = "fp32" if variant == "onnx_fp32" else "bf16"
     return OnnxModelPaths(
@@ -165,16 +177,33 @@ def _onnx_paths(args: argparse.Namespace, variant: Variant):
     )
 
 
+def _preload_onnx_sessions(pipeline, mode: str) -> None:
+    # Runtime sessions stay lazy in production. Benchmarking preloads only the
+    # sessions used by the selected mode so load/synth timings are interpretable.
+    _ = pipeline.sessions.prefill
+    _ = pipeline.sessions.decode_step
+    _ = pipeline.sessions.audio_decoder
+    if mode in {"controllable_clone", "ultimate_clone"}:
+        _ = pipeline.sessions.audio_encoder
+
+
 def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> BenchResult:
-    VoxCPM2OnnxPipeline, _, _ = _runtime_classes()
+    VoxCPM2OnnxPipeline, _, _, _, _, _ = _runtime_classes()
     total_start = time.perf_counter()
     load_start = time.perf_counter()
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts(
         model_path=args.model_path,
         local_files_only=args.local_files_only,
         onnx_paths=_onnx_paths(args, variant),
+        graph_optimization_level=args.onnx_graph_optimization,
+        execution_mode=args.onnx_execution_mode,
+        log_severity_level=args.onnx_log_severity,
+        intra_op_num_threads=args.onnx_intra_op_threads,
+        inter_op_num_threads=args.onnx_inter_op_threads,
     )
     pipeline.validate()
+    if args.onnx_preload_sessions:
+        _preload_onnx_sessions(pipeline, args.mode)
     load_seconds = time.perf_counter() - load_start
 
     synth_start = time.perf_counter()
@@ -221,6 +250,13 @@ def _run_orig(args: argparse.Namespace, output_wav: Path) -> BenchResult:
 
     from voxcpm import VoxCPM
 
+    # Official VoxCPM2 samples diffusion noise with torch.randn inside the model.
+    # Seeding here makes benchmark repeats stable and narrows one source of
+    # mismatch against the ONNX host-supplied NumPy diffusion noise path.
+    import random
+
+    import torch
+
     model = VoxCPM.from_pretrained(
         args.model_path,
         load_denoiser=False,
@@ -232,6 +268,9 @@ def _run_orig(args: argparse.Namespace, output_wav: Path) -> BenchResult:
     load_seconds = time.perf_counter() - load_start
 
     synth_start = time.perf_counter()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     waveform = model.generate(
         text=_mode_text(args),
         prompt_wav_path=str(args.prompt_wav) if args.prompt_wav else None,
@@ -325,7 +364,7 @@ def _report_path(args: argparse.Namespace) -> Path:
 
 
 def _print_header(args: argparse.Namespace) -> None:
-    _, VoxCPM2RuntimeConfig, _ = _runtime_classes()
+    _, VoxCPM2RuntimeConfig, _, _, _, _ = _runtime_classes()
     max_steps_text = (
         f"auto-until-stop (safety cap: {VoxCPM2RuntimeConfig().decode_safety_max_steps})"
         if args.max_steps == 0
@@ -339,6 +378,16 @@ def _print_header(args: argparse.Namespace) -> None:
     print(f"output_dir    : {args.output_dir.expanduser()}", flush=True)
     print(f"json_report   : {_report_path(args)}", flush=True)
     print(f"ONNX decode   : max_steps={max_steps_text}, min_steps={args.min_steps}", flush=True)
+    print(
+        "ONNX ORT      : "
+        f"provider=CPUExecutionProvider, graph_opt={args.onnx_graph_optimization}, "
+        f"execution={args.onnx_execution_mode}, "
+        f"log={args.onnx_log_severity}, "
+        f"preload_sessions={'yes' if args.onnx_preload_sessions else 'no'}, "
+        f"intra_op={args.onnx_intra_op_threads if args.onnx_intra_op_threads is not None else 'default'}, "
+        f"inter_op={args.onnx_inter_op_threads if args.onnx_inter_op_threads is not None else 'default'}",
+        flush=True,
+    )
     print(
         "official API  : "
         f"max_len={args.orig_max_len}, min_len={args.orig_min_len}, "
@@ -424,6 +473,7 @@ def _print_summary(results: list[BenchResult]) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
+    _, _, _, graph_optimization_choices, execution_mode_choices, log_severity_choices = _runtime_classes()
     parser = argparse.ArgumentParser(
         description="Benchmark official VoxCPM2 API, ONNX FP32, and experimental ONNX BF16 pipelines.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -456,7 +506,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-wav", type=Path, help="Prompt WAV for ultimate_clone.")
     parser.add_argument("--prompt-text", help="Prompt text for ultimate_clone.")
     parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value.")
-    parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for ONNX host diffusion noise.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for benchmark RNGs: NumPy host diffusion noise and official PyTorch diffusion noise.",
+    )
     parser.add_argument(
         "--max-steps",
         type=int,
@@ -477,6 +532,49 @@ def _parser() -> argparse.ArgumentParser:
         "--show-variant-output",
         action="store_true",
         help="Do not suppress official API logs/progress bars; useful only for debugging.",
+    )
+    parser.add_argument(
+        "--onnx-graph-optimization",
+        choices=graph_optimization_choices,
+        default="disable",
+        help=(
+            "ONNX Runtime graph optimization level for ONNX variants. "
+            "Default stays conservative for FP32 parity; use all/extended for performance experiments."
+        ),
+    )
+    parser.add_argument(
+        "--onnx-execution-mode",
+        choices=execution_mode_choices,
+        default="sequential",
+        help="ONNX Runtime execution mode for ONNX variants.",
+    )
+    parser.add_argument(
+        "--onnx-log-severity",
+        choices=log_severity_choices,
+        default="error",
+        help=(
+            "Minimum ONNX Runtime log severity for ONNX variants. The benchmark defaults to error "
+            "to keep perf output readable; use warning/info when debugging ORT graph optimization."
+        ),
+    )
+    parser.add_argument(
+        "--onnx-preload-sessions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Create ONNX Runtime sessions during the load phase. Disable with --no-onnx-preload-sessions "
+            "to measure first-request latency."
+        ),
+    )
+    parser.add_argument(
+        "--onnx-intra-op-threads",
+        type=int,
+        help="ONNX Runtime intra-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
+    )
+    parser.add_argument(
+        "--onnx-inter-op-threads",
+        type=int,
+        help="ONNX Runtime inter-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
     )
 
     parser.add_argument("--orig-device", default="cpu", help="Device passed to official VoxCPM.from_pretrained.")
