@@ -40,21 +40,21 @@ class OnnxModelPaths:
     audio_encoder: Path = ONNX_MODELS_ROOT / "fp32" / "audio_vae_encoder" / "audio_vae_encoder.onnx"
     audio_decoder: Path = ONNX_MODELS_ROOT / "fp32" / "audio_vae_decoder" / "audio_vae_decoder.onnx"
     prefill: Path = ONNX_MODELS_ROOT / "fp32" / "prefill" / "voxcpm2_prefill.onnx"
-    decode_step: Path = ONNX_MODELS_ROOT / "fp32" / "decode_step" / "voxcpm2_decode_step.onnx"
+    decode_chunk: Path = ONNX_MODELS_ROOT / "fp32" / "decode_chunk" / "voxcpm2_decode_chunk.onnx"
 
     def expanded(self) -> "OnnxModelPaths":
         return OnnxModelPaths(
             audio_encoder=self.audio_encoder.expanduser().resolve(),
             audio_decoder=self.audio_decoder.expanduser().resolve(),
             prefill=self.prefill.expanduser().resolve(),
-            decode_step=self.decode_step.expanduser().resolve(),
+            decode_chunk=self.decode_chunk.expanduser().resolve(),
         )
 
     def items(self) -> Iterable[tuple[str, Path]]:
         yield "audio_encoder", self.audio_encoder
         yield "audio_decoder", self.audio_decoder
         yield "prefill", self.prefill
-        yield "decode_step", self.decode_step
+        yield "decode_chunk", self.decode_chunk
 
 
 @dataclass
@@ -110,8 +110,8 @@ class OrtSessionFactory:
         return self._get("prefill", self.paths.prefill)
 
     @property
-    def decode_step(self) -> ort.InferenceSession:
-        return self._get("decode_step", self.paths.decode_step)
+    def decode_chunk(self) -> ort.InferenceSession:
+        return self._get("decode_chunk", self.paths.decode_chunk)
 
     def _session_options(self, session_name: str | None = None) -> ort.SessionOptions:
         options = ort.SessionOptions()

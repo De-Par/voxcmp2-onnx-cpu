@@ -216,6 +216,63 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         diffusion_noise: torch.Tensor,
         cfg_value: torch.Tensor,
     ) -> tuple[torch.Tensor, ...]:
+        outputs = self._forward_compute(
+            lm_hidden,
+            residual_hidden,
+            prefix_feat_cond,
+            base_k_cache,
+            base_v_cache,
+            base_current_length,
+            residual_k_cache,
+            residual_v_cache,
+            residual_current_length,
+            diffusion_noise,
+            cfg_value,
+        )
+        (
+            pred_audio_feature,
+            decoder_latent,
+            stop_logits,
+            next_lm_hidden,
+            next_residual_hidden,
+            pred_feat,
+            base_k_update,
+            base_v_update,
+            next_base_current_length,
+            residual_k_update,
+            residual_v_update,
+            next_residual_current_length,
+        ) = outputs
+
+        return (
+            cast_tensor_if_needed(pred_audio_feature, self.host_float_dtype),
+            cast_tensor_if_needed(decoder_latent, self.host_float_dtype),
+            cast_tensor_if_needed(stop_logits, self.host_float_dtype),
+            cast_tensor_if_needed(next_lm_hidden, self.host_float_dtype),
+            cast_tensor_if_needed(next_residual_hidden, self.host_float_dtype),
+            cast_tensor_if_needed(pred_feat, self.host_float_dtype),
+            cast_tensor_if_needed(base_k_update, self.host_float_dtype),
+            cast_tensor_if_needed(base_v_update, self.host_float_dtype),
+            next_base_current_length,
+            cast_tensor_if_needed(residual_k_update, self.host_float_dtype),
+            cast_tensor_if_needed(residual_v_update, self.host_float_dtype),
+            next_residual_current_length,
+        )
+
+    def _forward_compute(
+        self,
+        lm_hidden: torch.Tensor,
+        residual_hidden: torch.Tensor,
+        prefix_feat_cond: torch.Tensor,
+        base_k_cache: torch.Tensor,
+        base_v_cache: torch.Tensor,
+        base_current_length: torch.Tensor,
+        residual_k_cache: torch.Tensor,
+        residual_v_cache: torch.Tensor,
+        residual_current_length: torch.Tensor,
+        diffusion_noise: torch.Tensor,
+        cfg_value: torch.Tensor,
+    ) -> tuple[torch.Tensor, ...]:
         model = self.model
         # Host code supplies FP32 tensors for both production profiles. The
         # wrapper localizes profile-specific compute dtype at the graph edge.
@@ -272,17 +329,17 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         )
 
         return (
-            cast_tensor_if_needed(pred_audio_feature, self.host_float_dtype),
-            cast_tensor_if_needed(decoder_latent, self.host_float_dtype),
-            cast_tensor_if_needed(stop_logits, self.host_float_dtype),
-            cast_tensor_if_needed(next_lm_hidden, self.host_float_dtype),
-            cast_tensor_if_needed(next_residual_hidden, self.host_float_dtype),
-            cast_tensor_if_needed(pred_feat, self.host_float_dtype),
-            cast_tensor_if_needed(base_k_update, self.host_float_dtype),
-            cast_tensor_if_needed(base_v_update, self.host_float_dtype),
+            pred_audio_feature,
+            decoder_latent,
+            stop_logits,
+            next_lm_hidden,
+            next_residual_hidden,
+            pred_feat,
+            base_k_update,
+            base_v_update,
             next_base_current_length,
-            cast_tensor_if_needed(residual_k_update, self.host_float_dtype),
-            cast_tensor_if_needed(residual_v_update, self.host_float_dtype),
+            residual_k_update,
+            residual_v_update,
             next_residual_current_length,
         )
 

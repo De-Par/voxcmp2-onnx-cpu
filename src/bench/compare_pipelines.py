@@ -34,7 +34,7 @@ BF16_MODEL_PATH_VALUES = {
     "audio_encoder": REPO_ROOT / "models" / "onnx" / "bf16" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
     "audio_decoder": REPO_ROOT / "models" / "onnx" / "bf16" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
     "prefill": REPO_ROOT / "models" / "onnx" / "bf16" / "prefill" / "voxcpm2_prefill.onnx",
-    "decode_step": REPO_ROOT / "models" / "onnx" / "bf16" / "decode_step" / "voxcpm2_decode_step.onnx",
+    "decode_chunk": REPO_ROOT / "models" / "onnx" / "bf16" / "decode_chunk" / "voxcpm2_decode_chunk.onnx",
 }
 
 
@@ -173,7 +173,7 @@ def _onnx_paths(args: argparse.Namespace, variant: Variant):
         audio_encoder=getattr(args, f"{prefix}_audio_encoder_onnx") or defaults.audio_encoder,
         audio_decoder=getattr(args, f"{prefix}_audio_decoder_onnx") or defaults.audio_decoder,
         prefill=getattr(args, f"{prefix}_prefill_onnx") or defaults.prefill,
-        decode_step=getattr(args, f"{prefix}_decode_step_onnx") or defaults.decode_step,
+        decode_chunk=getattr(args, f"{prefix}_decode_chunk_onnx") or defaults.decode_chunk,
     )
 
 
@@ -181,7 +181,7 @@ def _preload_onnx_sessions(pipeline, mode: str) -> None:
     # Runtime sessions stay lazy in production. Benchmarking preloads only the
     # sessions used by the selected mode so load/synth timings are interpretable.
     _ = pipeline.sessions.prefill
-    _ = pipeline.sessions.decode_step
+    _ = pipeline.sessions.decode_chunk
     _ = pipeline.sessions.audio_decoder
     if mode in {"controllable_clone", "ultimate_clone"}:
         _ = pipeline.sessions.audio_encoder
@@ -596,12 +596,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fp32-audio-encoder-onnx", type=Path, help="Override FP32 AudioVAEEncoder ONNX path.")
     parser.add_argument("--fp32-audio-decoder-onnx", type=Path, help="Override FP32 AudioVAEDecoder ONNX path.")
     parser.add_argument("--fp32-prefill-onnx", type=Path, help="Override FP32 VoxCPM2Prefill ONNX path.")
-    parser.add_argument("--fp32-decode-step-onnx", type=Path, help="Override FP32 VoxCPM2DecodeStep ONNX path.")
+    parser.add_argument("--fp32-decode-chunk-onnx", type=Path, help="Override FP32 VoxCPM2DecodeChunk ONNX path.")
 
     parser.add_argument("--bf16-audio-encoder-onnx", type=Path, help="Override BF16 AudioVAEEncoder ONNX path.")
     parser.add_argument("--bf16-audio-decoder-onnx", type=Path, help="Override BF16 AudioVAEDecoder ONNX path.")
     parser.add_argument("--bf16-prefill-onnx", type=Path, help="Override BF16 VoxCPM2Prefill ONNX path.")
-    parser.add_argument("--bf16-decode-step-onnx", type=Path, help="Override BF16 VoxCPM2DecodeStep ONNX path.")
+    parser.add_argument("--bf16-decode-chunk-onnx", type=Path, help="Override BF16 VoxCPM2DecodeChunk ONNX path.")
 
     return parser
 

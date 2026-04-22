@@ -63,7 +63,7 @@ That pattern is storage-only and gives no BF16 compute benefit.
 | `AudioVAEEncoder` | encoder convolution/residual stack | none forced | waveform FP32 -> BF16, latent BF16 -> FP32 |
 | `AudioVAEDecoder` | decoder convolution/residual stack | none forced | latent FP32 -> BF16, waveform BF16 -> FP32 |
 | `VoxCPM2Prefill` | feature encoder, text embedding, base LM, FSQ/fusion, residual LM | none forced | masks/audio FP32 -> BF16, hidden/cache BF16 -> FP32 |
-| `VoxCPM2DecodeStep` | DiT projections, LocDiT/CFM, feature encoder, base/residual LM, stop head | rotary position embedding multiply/add | hidden/cache/noise/cfg FP32 -> BF16, outputs BF16 -> FP32 |
+| `VoxCPM2DecodeChunk` | DiT projections, LocDiT/CFM, feature encoder, base/residual LM, stop head across four exact internal steps | rotary position embedding multiply/add | hidden/cache/noise/cfg FP32 -> BF16, chunk outputs BF16 -> FP32 |
 
 The rotary island is intentionally small and isolated. It casts q/k/cos/sin to FP32 for rotary multiply/add and casts q/k back to the active compute dtype.
 
@@ -146,7 +146,7 @@ python -B -m pytest tests/export/test_export_contract_consistency.py tests/expor
 After BF16 export, check for forbidden storage-only and ping-pong patterns:
 
 ```bash
-VOXCPM2_BF16_ONNX_PATHS="models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx:models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx:models/onnx/bf16/prefill/voxcpm2_prefill.onnx:models/onnx/bf16/decode_step/voxcpm2_decode_step.onnx" \
+VOXCPM2_BF16_ONNX_PATHS="models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx:models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx:models/onnx/bf16/prefill/voxcpm2_prefill.onnx:models/onnx/bf16/decode_chunk/voxcpm2_decode_chunk.onnx" \
 python -B -m pytest tests/parity/test_bf16_compute_path.py
 ```
 

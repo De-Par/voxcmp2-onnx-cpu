@@ -187,14 +187,14 @@ def _onnx_paths(args: argparse.Namespace):
         audio_encoder=args.audio_encoder_onnx or defaults.audio_encoder,
         audio_decoder=args.audio_decoder_onnx or defaults.audio_decoder,
         prefill=args.prefill_onnx or defaults.prefill,
-        decode_step=args.decode_step_onnx or defaults.decode_step,
+        decode_chunk=args.decode_chunk_onnx or defaults.decode_chunk,
     )
 
 
 def _preload_onnx_sessions(pipeline: Any) -> None:
     _ = pipeline.sessions.audio_encoder
     _ = pipeline.sessions.prefill
-    _ = pipeline.sessions.decode_step
+    _ = pipeline.sessions.decode_chunk
     _ = pipeline.sessions.audio_decoder
 
 
@@ -279,15 +279,18 @@ def _run_onnx_case(
     prefill_start = time.perf_counter()
     state = pipeline._init_fixed_capacity_decode_state(
         dict(zip(prefill_outputs, pipeline.sessions.prefill.run(prefill_outputs, sequence), strict=True)),
-        max_decode_steps=effective_max_steps,
+        max_decode_steps=effective_max_steps + pipeline.config.decode_chunk_size,
     )
     prefill_seconds = time.perf_counter() - prefill_start
 
     rng = np.random.default_rng(seed)
     generated: list[np.ndarray] = []
-    step_seconds: list[float] = []
+    chunk_seconds: list[float] = []
     stop_reason = None
-    for step_index in range(effective_max_steps):
+    completed_steps = 0
+    while completed_steps < effective_max_steps:
+        remaining_steps = effective_max_steps - completed_steps
+        candidate_steps = min(pipeline.config.decode_chunk_size, remaining_steps)
         decode_inputs = {
             "lm_hidden": state["lm_hidden"],
             "residual_hidden": state["residual_hidden"],
@@ -299,24 +302,43 @@ def _run_onnx_case(
             "residual_v_cache": state["residual_v_cache"],
             "residual_current_length": state["residual_current_length"],
             "diffusion_noise": rng.standard_normal(
-                (1, pipeline.config.feat_dim, pipeline.config.patch_size), dtype=np.float32
+                (
+                    pipeline.config.decode_chunk_size,
+                    1,
+                    pipeline.config.feat_dim,
+                    pipeline.config.patch_size,
+                ),
+                dtype=np.float32,
             ),
             "cfg_value": np.array([args.cfg_value], dtype=np.float32),
         }
-        step_start = time.perf_counter()
+        chunk_start = time.perf_counter()
         outputs = dict(
-            zip(decode_outputs, pipeline.sessions.decode_step.run(decode_outputs, decode_inputs), strict=True)
+            zip(decode_outputs, pipeline.sessions.decode_chunk.run(decode_outputs, decode_inputs), strict=True)
         )
-        step_seconds.append(time.perf_counter() - step_start)
-        generated.append(outputs["pred_audio_feature"])
-        completed_steps = step_index + 1
-        if completed_steps >= args.min_steps and int(np.argmax(outputs["stop_logits"], axis=-1)[0]) == 1:
-            stop_reason = "stop_logits"
-        elif completed_steps >= effective_max_steps:
-            stop_reason = "safety_max_steps" if args.max_steps == 0 else "max_steps"
+        chunk_seconds.append(time.perf_counter() - chunk_start)
+        accepted_steps = pipeline._accept_decode_chunk_outputs(
+            outputs,
+            generated=generated,
+            completed_steps=completed_steps,
+            candidate_steps=candidate_steps,
+            effective_max_steps=effective_max_steps,
+            requested_max_steps=args.max_steps,
+            min_steps=args.min_steps,
+            progress_callback=None,
+        )
+        completed_steps += accepted_steps
+        stop_reason = pipeline._chunk_stop_reason(
+            outputs,
+            accepted_steps=accepted_steps,
+            completed_steps=completed_steps,
+            effective_max_steps=effective_max_steps,
+            requested_max_steps=args.max_steps,
+            min_steps=args.min_steps,
+        )
         if stop_reason is not None:
             break
-        pipeline._apply_decode_cache_updates(state, outputs)
+        pipeline._apply_decode_chunk_cache_updates(state, outputs, update_steps=accepted_steps)
         state["lm_hidden"] = outputs["next_lm_hidden"]
         state["residual_hidden"] = outputs["next_residual_hidden"]
         state["prefix_feat_cond"] = outputs["next_prefix_feat_cond"]
@@ -343,10 +365,14 @@ def _run_onnx_case(
         "latencies": {
             "input_build_seconds": round(input_build_seconds, 6),
             "prefill_seconds": round(prefill_seconds, 6),
-            "decode_step_total_seconds": round(sum(step_seconds), 6),
-            "decode_step_seconds": [round(value, 6) for value in step_seconds],
-            "decode_step_seconds_p50": _percentile(step_seconds, 50),
-            "decode_step_seconds_p90": _percentile(step_seconds, 90),
+            "decode_step_total_seconds": round(sum(chunk_seconds), 6),
+            "decode_step_seconds": [round(value, 6) for value in chunk_seconds],
+            "decode_step_seconds_p50": _percentile(chunk_seconds, 50),
+            "decode_step_seconds_p90": _percentile(chunk_seconds, 90),
+            "decode_chunk_total_seconds": round(sum(chunk_seconds), 6),
+            "decode_chunk_seconds": [round(value, 6) for value in chunk_seconds],
+            "decode_chunk_seconds_p50": _percentile(chunk_seconds, 50),
+            "decode_chunk_seconds_p90": _percentile(chunk_seconds, 90),
             "audio_decode_seconds": round(audio_decode_seconds, 6),
             "total_synth_seconds": round(total_synth_seconds, 6),
         },
@@ -433,6 +459,10 @@ def _run_official_case(
             "decode_step_seconds": [],
             "decode_step_seconds_p50": None,
             "decode_step_seconds_p90": None,
+            "decode_chunk_total_seconds": None,
+            "decode_chunk_seconds": [],
+            "decode_chunk_seconds_p50": None,
+            "decode_chunk_seconds_p90": None,
             "audio_decode_seconds": None,
             "total_synth_seconds": round(total_synth_seconds, 6),
         },
@@ -482,6 +512,12 @@ def _aggregate_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if item["latencies"]["decode_step_total_seconds"] is not None
         ]
         decode_step_values = [value for item in items for value in item["latencies"].get("decode_step_seconds", [])]
+        decode_chunk_totals = [
+            item["latencies"]["decode_chunk_total_seconds"]
+            for item in items
+            if item["latencies"].get("decode_chunk_total_seconds") is not None
+        ]
+        decode_chunk_values = [value for item in items for value in item["latencies"].get("decode_chunk_seconds", [])]
         audio_decode_values = [
             item["latencies"]["audio_decode_seconds"]
             for item in items
@@ -499,6 +535,8 @@ def _aggregate_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "prefill_seconds": _stats(prefill_values),
                 "decode_step_total_seconds": _stats(decode_step_totals),
                 "decode_step_seconds": _stats(decode_step_values),
+                "decode_chunk_total_seconds": _stats(decode_chunk_totals),
+                "decode_chunk_seconds": _stats(decode_chunk_values),
                 "audio_decode_seconds": _stats(audio_decode_values),
                 "output_duration_seconds": _stats(duration_values),
                 "decode_steps": _stats(decode_steps),
@@ -528,6 +566,8 @@ def _comparison_rows(aggregates: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "onnx_prefill_p50": onnx["prefill_seconds"]["p50"],
                 "onnx_decode_step_total_p50": onnx["decode_step_total_seconds"]["p50"],
                 "onnx_decode_step_p50": onnx["decode_step_seconds"]["p50"],
+                "onnx_decode_chunk_total_p50": onnx["decode_chunk_total_seconds"]["p50"],
+                "onnx_decode_chunk_p50": onnx["decode_chunk_seconds"]["p50"],
                 "onnx_audio_decode_p50": onnx["audio_decode_seconds"]["p50"],
             }
         )
@@ -607,7 +647,7 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         "",
         "## Summary",
         "",
-        "| case | variant | load s | wall p50 s | wall p90 s | synth p50 s | synth p90 s | duration p50 s | decode steps p50 | prefill p50 s | decode-step p50 s | decode-total p50 s |",
+        "| case | variant | load s | wall p50 s | wall p90 s | synth p50 s | synth p90 s | duration p50 s | decode steps p50 | prefill p50 s | decode-chunk p50 s | decode-total p50 s |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for item in report["aggregates"]:
@@ -625,8 +665,8 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
                     _format_cell(item["output_duration_seconds"]["p50"]),
                     _format_cell(item["decode_steps"]["p50"]),
                     _format_cell(item["prefill_seconds"]["p50"]),
-                    _format_cell(item["decode_step_seconds"]["p50"]),
-                    _format_cell(item["decode_step_total_seconds"]["p50"]),
+                    _format_cell(item["decode_chunk_seconds"]["p50"]),
+                    _format_cell(item["decode_chunk_total_seconds"]["p50"]),
                 ]
             )
             + " |"
@@ -652,7 +692,7 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
                     _format_cell(row["onnx_vs_official_ratio"]),
                     _format_cell(row["onnx_input_build_p50"]),
                     _format_cell(row["onnx_prefill_p50"]),
-                    _format_cell(row["onnx_decode_step_total_p50"]),
+                    _format_cell(row["onnx_decode_chunk_total_p50"]),
                     _format_cell(row["onnx_audio_decode_p50"]),
                 ]
             )
@@ -664,8 +704,8 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
             "",
             "## Notes",
             "",
-            "- Official API exposes reliable load and total synthesis timing. Per-stage official prefill/decode-step timing is intentionally reported as `-` because this tool does not rewrite official model internals.",
-            "- ONNX stage timings are measured at current explicit runtime boundaries: host input build, `VoxCPM2Prefill`, repeated `VoxCPM2DecodeStep`, and `AudioVAEDecoder`.",
+            "- Official API exposes reliable load and total synthesis timing. Per-stage official prefill/decode timing is intentionally reported as `-` because this tool does not rewrite official model internals.",
+            "- ONNX stage timings are measured at current explicit runtime boundaries: host input build, `VoxCPM2Prefill`, repeated `VoxCPM2DecodeChunk`, and `AudioVAEDecoder`.",
             "- No model math, export path, or runtime stop/cache semantics are changed by this benchmark.",
             "",
         ]
@@ -802,7 +842,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-encoder-onnx", type=Path, help="Override AudioVAEEncoder ONNX path.")
     parser.add_argument("--audio-decoder-onnx", type=Path, help="Override AudioVAEDecoder ONNX path.")
     parser.add_argument("--prefill-onnx", type=Path, help="Override VoxCPM2Prefill ONNX path.")
-    parser.add_argument("--decode-step-onnx", type=Path, help="Override VoxCPM2DecodeStep ONNX path.")
+    parser.add_argument("--decode-chunk-onnx", type=Path, help="Override production VoxCPM2DecodeChunk ONNX path.")
     parser.add_argument("--list-cases", action="store_true", help="Print the fixed case matrix and exit.")
     return parser
 

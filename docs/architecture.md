@@ -99,9 +99,9 @@ Mode-specific assembly is host-side:
 - `controllable_clone`: host prepends reference audio marker/features.
 - `ultimate_clone`: host combines reference prefix with prompt text/audio continuation.
 
-### `VoxCPM2DecodeStep`
+### `VoxCPM2DecodeChunk`
 
-Purpose: exactly one autoregressive audio-feature step. The outer decode loop stays in host code.
+Purpose: a fixed-size chunk of exact autoregressive audio-feature steps. The outer decode loop and stop policy stay in host code.
 
 Inputs:
 
@@ -110,18 +110,20 @@ Inputs:
 - `prefix_feat_cond`: `float32[batch, patch_size, feat_dim]`
 - fixed-capacity base/residual K/V caches
 - `base_current_length`, `residual_current_length`: `int64[1]`
-- `diffusion_noise`: `float32[batch, feat_dim, patch_size]`
+- `diffusion_noise`: `float32[chunk_size=4, batch, feat_dim, patch_size]`
 - `cfg_value`: `float32[1]`
 
 Outputs:
 
-- `pred_audio_feature`: `float32[batch, 1, patch_size, feat_dim]`
-- `decoder_latent`: `float32[batch, feat_dim, patch_size]`
-- `stop_logits`: `float32[batch, 2]`
+- `pred_audio_feature`: `float32[batch, chunk_size=4, patch_size, feat_dim]`
+- `decoder_latent`: `float32[batch, feat_dim, chunk_size * patch_size]`
+- `stop_logits`: `float32[batch, chunk_size=4, 2]`
 - next hidden states and prefix feature condition
-- one-position K/V updates and next cache lengths
+- chunk K/V updates and next cache lengths
 
-The graph owns one neural step: DiT conditioning, fixed-size CFM/LocDiT solve, feature encode, base LM step, residual LM step, stop head, and tensor state outputs.
+The graph owns four exact neural steps by default: DiT conditioning, fixed-size CFM/LocDiT solve, feature encode, base LM step, residual LM step, stop head, and tensor state outputs. The internal step math is shared with the one-step export utility; no solver schedule or hidden math changes.
+
+`VoxCPM2DecodeStep` remains available as an internal export/parity utility. It is not the production runtime path.
 
 ### `AudioVAEDecoder`
 
@@ -156,25 +158,25 @@ residual_k_cache: [residual_layers, batch, kv_heads, max_cache_seq, head_dim]
 residual_v_cache: [residual_layers, batch, kv_heads, max_cache_seq, head_dim]
 ```
 
-Output update shapes:
+Production decode-chunk output update shapes:
 
 ```text
-base_k_update:     [base_layers, batch, kv_heads, 1, head_dim]
-base_v_update:     [base_layers, batch, kv_heads, 1, head_dim]
-residual_k_update: [residual_layers, batch, kv_heads, 1, head_dim]
-residual_v_update: [residual_layers, batch, kv_heads, 1, head_dim]
+base_k_update:     [base_layers, batch, kv_heads, chunk_size, head_dim]
+base_v_update:     [base_layers, batch, kv_heads, chunk_size, head_dim]
+residual_k_update: [residual_layers, batch, kv_heads, chunk_size, head_dim]
+residual_v_update: [residual_layers, batch, kv_heads, chunk_size, head_dim]
 ```
 
 Host update rule:
 
 ```text
-base_k_cache[:, :, :, base_current_length:base_current_length + 1, :] = base_k_update
-base_v_cache[:, :, :, base_current_length:base_current_length + 1, :] = base_v_update
-residual_k_cache[:, :, :, residual_current_length:residual_current_length + 1, :] = residual_k_update
-residual_v_cache[:, :, :, residual_current_length:residual_current_length + 1, :] = residual_v_update
+base_k_cache[:, :, :, base_current_length:base_current_length + accepted_steps, :] = base_k_update[:, :, :, :accepted_steps, :]
+base_v_cache[:, :, :, base_current_length:base_current_length + accepted_steps, :] = base_v_update[:, :, :, :accepted_steps, :]
+residual_k_cache[:, :, :, residual_current_length:residual_current_length + accepted_steps, :] = residual_k_update[:, :, :, :accepted_steps, :]
+residual_v_cache[:, :, :, residual_current_length:residual_current_length + accepted_steps, :] = residual_v_update[:, :, :, :accepted_steps, :]
 ```
 
-The traffic goal is to remove output-cache growth. Old output payload per step was `2 * K * (S + 1)`. New output payload is `2 * K`, where `K = (base_layers + residual_layers) * batch * kv_heads * head_dim`.
+The traffic goal is to remove output-cache growth and amortize Python/ORT session boundary overhead. Old grow-by-concat output payload per step was `2 * K * (S + 1)`. The chunked fixed-cache payload per session is `2 * K * chunk_size`, where `K = (base_layers + residual_layers) * batch * kv_heads * head_dim`.
 
 ## Runtime Rules
 
@@ -234,7 +236,7 @@ Expected results:
 - Every required mode maps to export and runtime orchestration requirements.
 - Host/ONNX boundaries match `src/contracts/module_schemas.py`.
 - Runtime validates ONNX paths before synthesis.
-- Decode-step state uses fixed-capacity cache tensors.
+- Decode-chunk state uses fixed-capacity cache tensors.
 - Multilingual and reference-audio paths remain active.
 - FP32 and BF16 artifacts use the same runtime path.
 - Missing model files, incompatible opset/runtime versions, and shape/dtype mismatches fail with actionable errors.

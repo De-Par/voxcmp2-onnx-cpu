@@ -10,13 +10,13 @@ try:
     from .common import add_precision_argument, get_precision_profile, output_path_under_root
     from .export_audio_vae_decoder import export_audio_vae_decoder
     from .export_audio_vae_encoder import export_audio_vae_encoder
-    from .export_decode_step import export_decode_step
+    from .export_decode_chunk import export_decode_chunk
     from .export_prefill import export_prefill
 except ImportError:
     from common import add_precision_argument, get_precision_profile, output_path_under_root  # type: ignore[no-redef]
     from export_audio_vae_decoder import export_audio_vae_decoder  # type: ignore[no-redef]
     from export_audio_vae_encoder import export_audio_vae_encoder  # type: ignore[no-redef]
-    from export_decode_step import export_decode_step  # type: ignore[no-redef]
+    from export_decode_chunk import export_decode_chunk  # type: ignore[no-redef]
     from export_prefill import export_prefill  # type: ignore[no-redef]
 
 
@@ -64,10 +64,11 @@ def export_all(args: argparse.Namespace) -> None:
             seed=args.seed,
         )
     )
-    export_decode_step(
+    export_decode_chunk(
         argparse.Namespace(
             **common,
-            output=_module_output(args.output_root, "decode_step", precision.name),
+            output=_module_output(args.output_root, "decode_chunk", precision.name),
+            chunk_size=args.chunk_size,
             current_length=args.current_length,
             max_cache_seq=args.max_cache_seq,
             inference_timesteps=args.inference_timesteps,
@@ -105,18 +106,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--reference-steps", type=int, default=3, help="Synthetic reference-audio steps.")
     parser.add_argument("--prompt-steps", type=int, default=3, help="Synthetic prompt-audio steps.")
-    parser.add_argument("--current-length", type=int, default=16, help="Decode-step example valid KV-cache length.")
+    parser.add_argument("--chunk-size", type=int, default=4, help="Decode steps per production ONNX session.run.")
+    parser.add_argument("--current-length", type=int, default=16, help="Decode-chunk example valid KV-cache length.")
     parser.add_argument(
         "--max-cache-seq",
         type=int,
         default=64,
-        help="Decode-step example fixed KV-cache capacity; must exceed --current-length.",
+        help="Decode-chunk example fixed KV-cache capacity; must be at least --current-length + --chunk-size.",
     )
     parser.add_argument(
         "--inference-timesteps",
         type=int,
         default=10,
-        help="Fixed CFM/LocDiT solver steps embedded in the decode-step graph.",
+        help="Fixed CFM/LocDiT solver steps embedded in each internal decode step.",
     )
     parser.add_argument("--cfg-value", type=float, default=2.0, help="Example classifier-free guidance value.")
     parser.add_argument("--seed", type=int, default=0, help="PyTorch RNG seed for synthetic export inputs.")

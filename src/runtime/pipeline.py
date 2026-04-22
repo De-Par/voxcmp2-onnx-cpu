@@ -107,6 +107,7 @@ class VoxCPM2RuntimeConfig:
     encode_sample_rate: int = 16000
     decode_sample_rate: int = 48000
     audio_chunk_size: int = 640
+    decode_chunk_size: int = 4
     decode_safety_max_steps: int = 4096
 
 
@@ -233,7 +234,7 @@ class VoxCPM2OnnxPipeline:
 
         # max_steps=0 is the production-friendly path: run until the model emits
         # an end-of-audio stop logit. The safety cap prevents an infinite loop if
-        # an exported decode_step graph or state contract is broken.
+        # an exported decode chunk graph or state contract is broken.
         effective_max_steps = self.config.decode_safety_max_steps if max_steps == 0 else max_steps
         if effective_max_steps < 1:
             raise ValueError("effective max decode steps must be >= 1")
@@ -252,16 +253,19 @@ class VoxCPM2OnnxPipeline:
         prefill_outputs = self.sessions.prefill.run(PREFILL_OUTPUTS, sequence)
         state = self._init_fixed_capacity_decode_state(
             dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True)),
-            max_decode_steps=effective_max_steps,
+            max_decode_steps=effective_max_steps + self.config.decode_chunk_size,
         )
         rng = np.random.default_rng(seed)
         generated: list[np.ndarray] = []
         stop_reason: StopReason | None = None
+        completed_steps = 0
 
-        for step_index in range(effective_max_steps):
-            # One ONNX call equals one autoregressive decode step. KV cache
-            # tensors are explicit inputs/outputs because ONNX Runtime cannot
-            # mutate the official Python-side cache object.
+        while completed_steps < effective_max_steps:
+            # One production ONNX call executes a small fixed chunk of exact
+            # autoregressive decode steps. Host code still owns stop policy,
+            # cache mutation, and the outer loop.
+            remaining_steps = effective_max_steps - completed_steps
+            accepted_steps = min(self.config.decode_chunk_size, remaining_steps)
             decode_inputs = {
                 "lm_hidden": state["lm_hidden"],
                 "residual_hidden": state["residual_hidden"],
@@ -273,31 +277,47 @@ class VoxCPM2OnnxPipeline:
                 "residual_v_cache": state["residual_v_cache"],
                 "residual_current_length": state["residual_current_length"],
                 "diffusion_noise": rng.standard_normal(
-                    (1, self.config.feat_dim, self.config.patch_size), dtype=np.float32
+                    (
+                        self.config.decode_chunk_size,
+                        1,
+                        self.config.feat_dim,
+                        self.config.patch_size,
+                    ),
+                    dtype=np.float32,
                 ),
                 "cfg_value": np.array([cfg_value], dtype=np.float32),
             }
             outputs = dict(
-                zip(DECODE_OUTPUTS, self.sessions.decode_step.run(DECODE_OUTPUTS, decode_inputs), strict=True)
+                zip(DECODE_OUTPUTS, self.sessions.decode_chunk.run(DECODE_OUTPUTS, decode_inputs), strict=True)
             )
-            generated.append(outputs["pred_audio_feature"])
-            completed_steps = step_index + 1
-            if completed_steps >= min_steps and int(np.argmax(outputs["stop_logits"], axis=-1)[0]) == 1:
-                stop_reason = "stop_logits"
-            elif completed_steps >= effective_max_steps:
-                stop_reason = "safety_max_steps" if max_steps == 0 else "max_steps"
-
-            if progress_callback is not None:
-                progress_callback(completed_steps, stop_reason)
+            accepted_steps = self._accept_decode_chunk_outputs(
+                outputs,
+                generated=generated,
+                completed_steps=completed_steps,
+                candidate_steps=accepted_steps,
+                effective_max_steps=effective_max_steps,
+                requested_max_steps=max_steps,
+                min_steps=min_steps,
+                progress_callback=progress_callback,
+            )
+            completed_steps += accepted_steps
+            stop_reason = self._chunk_stop_reason(
+                outputs,
+                accepted_steps=accepted_steps,
+                completed_steps=completed_steps,
+                effective_max_steps=effective_max_steps,
+                requested_max_steps=max_steps,
+                min_steps=min_steps,
+            )
             if stop_reason is not None:
                 break
-            self._apply_decode_cache_updates(state, outputs)
+            self._apply_decode_chunk_cache_updates(state, outputs, update_steps=accepted_steps)
             state["lm_hidden"] = outputs["next_lm_hidden"]
             state["residual_hidden"] = outputs["next_residual_hidden"]
             state["prefix_feat_cond"] = outputs["next_prefix_feat_cond"]
 
         feature_seq = np.concatenate(generated, axis=1)
-        # AudioVAEDecoder expects [B, latent_dim, latent_steps]. The decode-step
+        # AudioVAEDecoder expects [B, latent_dim, latent_steps]. The decode
         # graph emits patch features, so host code performs the reversible layout
         # transform before the final ONNX decoder call.
         decoder_latent = np.transpose(feature_seq, (0, 3, 1, 2)).reshape(1, self.config.feat_dim, -1)
@@ -356,6 +376,100 @@ class VoxCPM2OnnxPipeline:
         state["residual_v_cache"][:, :, :, residual_index : residual_index + 1, :] = outputs["residual_v_update"]
         state["base_current_length"] = outputs["next_base_current_length"].astype(np.int64, copy=False)
         state["residual_current_length"] = outputs["next_residual_current_length"].astype(np.int64, copy=False)
+
+    @staticmethod
+    def _accept_decode_chunk_outputs(
+        outputs: dict[str, np.ndarray],
+        *,
+        generated: list[np.ndarray],
+        completed_steps: int,
+        candidate_steps: int,
+        effective_max_steps: int,
+        requested_max_steps: int,
+        min_steps: int,
+        progress_callback: Callable[[int, StopReason | None], None] | None,
+    ) -> int:
+        accepted_steps = 0
+        for chunk_index in range(candidate_steps):
+            next_completed_steps = completed_steps + chunk_index + 1
+            step_stop_reason = VoxCPM2OnnxPipeline._step_stop_reason(
+                outputs["stop_logits"],
+                chunk_index=chunk_index,
+                completed_steps=next_completed_steps,
+                effective_max_steps=effective_max_steps,
+                requested_max_steps=requested_max_steps,
+                min_steps=min_steps,
+            )
+            generated.append(outputs["pred_audio_feature"][:, chunk_index : chunk_index + 1, :, :])
+            accepted_steps += 1
+            if progress_callback is not None:
+                progress_callback(next_completed_steps, step_stop_reason)
+            if step_stop_reason is not None:
+                break
+        return accepted_steps
+
+    @staticmethod
+    def _chunk_stop_reason(
+        outputs: dict[str, np.ndarray],
+        *,
+        accepted_steps: int,
+        completed_steps: int,
+        effective_max_steps: int,
+        requested_max_steps: int,
+        min_steps: int,
+    ) -> StopReason | None:
+        if accepted_steps < 1:
+            return None
+        return VoxCPM2OnnxPipeline._step_stop_reason(
+            outputs["stop_logits"],
+            chunk_index=accepted_steps - 1,
+            completed_steps=completed_steps,
+            effective_max_steps=effective_max_steps,
+            requested_max_steps=requested_max_steps,
+            min_steps=min_steps,
+        )
+
+    @staticmethod
+    def _step_stop_reason(
+        stop_logits: np.ndarray,
+        *,
+        chunk_index: int,
+        completed_steps: int,
+        effective_max_steps: int,
+        requested_max_steps: int,
+        min_steps: int,
+    ) -> StopReason | None:
+        if completed_steps >= min_steps and int(np.argmax(stop_logits[:, chunk_index, :], axis=-1)[0]) == 1:
+            return "stop_logits"
+        if completed_steps >= effective_max_steps:
+            return "safety_max_steps" if requested_max_steps == 0 else "max_steps"
+        return None
+
+    @staticmethod
+    def _apply_decode_chunk_cache_updates(
+        state: dict[str, np.ndarray],
+        outputs: dict[str, np.ndarray],
+        *,
+        update_steps: int,
+    ) -> None:
+        """Apply fixed-capacity K/V updates returned by the chunked graph"""
+
+        base_index = int(state["base_current_length"][0])
+        residual_index = int(state["residual_current_length"][0])
+        state["base_k_cache"][:, :, :, base_index : base_index + update_steps, :] = outputs["base_k_update"][
+            :, :, :, :update_steps, :
+        ]
+        state["base_v_cache"][:, :, :, base_index : base_index + update_steps, :] = outputs["base_v_update"][
+            :, :, :, :update_steps, :
+        ]
+        state["residual_k_cache"][:, :, :, residual_index : residual_index + update_steps, :] = outputs[
+            "residual_k_update"
+        ][:, :, :, :update_steps, :]
+        state["residual_v_cache"][:, :, :, residual_index : residual_index + update_steps, :] = outputs[
+            "residual_v_update"
+        ][:, :, :, :update_steps, :]
+        state["base_current_length"] = np.array([base_index + update_steps], dtype=np.int64)
+        state["residual_current_length"] = np.array([residual_index + update_steps], dtype=np.int64)
 
     def write_wav(self, path: str | Path, waveform: np.ndarray) -> None:
         # WAV writing is intentionally host code, not ONNX. int16 output keeps
@@ -518,5 +632,7 @@ class VoxCPM2OnnxPipeline:
                 encode_sample_rate=int(audio_vae_config.get("sample_rate", self.config.encode_sample_rate)),
                 decode_sample_rate=int(audio_vae_config.get("out_sample_rate", self.config.decode_sample_rate)),
                 audio_chunk_size=int(np.prod(audio_vae_config.get("encoder_rates", [2, 5, 8, 8]))),
+                decode_chunk_size=self.config.decode_chunk_size,
+                decode_safety_max_steps=self.config.decode_safety_max_steps,
             ),
         )

@@ -9,7 +9,7 @@ The export target is four neural ONNX modules:
 - `AudioVAEEncoder`
 - `AudioVAEDecoder`
 - `VoxCPM2Prefill`
-- `VoxCPM2DecodeStep`
+- `VoxCPM2DecodeChunk`
 
 Host code remains responsible for text normalization, tokenization, WAV I/O, resampling, prompt/reference orchestration, random diffusion noise, decode loop, stop policy, and WAV writing.
 
@@ -32,12 +32,12 @@ Host code remains responsible for text normalization, tokenization, WAV I/O, res
 models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 models/onnx/fp32/prefill/voxcpm2_prefill.onnx
-models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
+models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx
 
 models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx
 models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx
 models/onnx/bf16/prefill/voxcpm2_prefill.onnx
-models/onnx/bf16/decode_step/voxcpm2_decode_step.onnx
+models/onnx/bf16/decode_chunk/voxcpm2_decode_chunk.onnx
 ```
 
 External data files must remain next to their `.onnx` files.
@@ -71,7 +71,7 @@ Module-level exports:
 python -B src/export/export_audio_vae_encoder.py --precision fp32
 python -B src/export/export_audio_vae_decoder.py --precision fp32
 python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
-python -B src/export/export_decode_step.py --precision fp32 --current-length 16 --max-cache-seq 64
+python -B src/export/export_decode_chunk.py --precision fp32 --chunk-size 4 --current-length 16 --max-cache-seq 64
 ```
 
 Use `--precision bf16` for the BF16 family.
@@ -127,13 +127,15 @@ Known risks:
 - `scaled_dot_product_attention(enable_gqa=True)` is the main exporter/runtime risk
 - LongRoPE dynamic indexing must stay documented if it fails export
 
-### VoxCPM2 Decode Step
+### VoxCPM2 Decode Chunk
 
-The decode-step wrapper exports exactly one neural step. It does not capture the host decode loop.
+The decode-chunk wrapper exports a static chunk of exact neural steps. It does not capture the full host decode loop or stop policy.
 
-The graph takes fixed-capacity cache tensors, valid lengths, and host-supplied diffusion noise. It returns one-position K/V updates and next lengths.
+The graph takes fixed-capacity cache tensors, valid lengths, and host-supplied diffusion noise for `chunk_size=4`. It returns chunk K/V updates, per-step stop logits, final hidden states, and next lengths.
 
-`inference_timesteps` is fixed at export time for the internal CFM/LocDiT solve. It does not fix the number of outer autoregressive steps.
+`inference_timesteps` is fixed at export time for each internal CFM/LocDiT solve. It does not fix the number of outer autoregressive steps.
+
+`VoxCPM2DecodeStep` remains available as an internal one-step export/parity utility. Production runtime and `export_all.py` use `VoxCPM2DecodeChunk`.
 
 ## Runtime Checkers
 
@@ -143,7 +145,7 @@ After export, run path-based ONNX checker and one ORT CPU invocation per module:
 python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16 --max-cache-seq 64
+python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx --chunk-size 4 --cache-seq 16 --max-cache-seq 64
 ```
 
 Each checker logs input names, output names, dtype, dynamic/static dims, CPU providers, and compact output statistics. Large models must use path-based `onnx.checker.check_model(str(path))`.
@@ -156,7 +158,7 @@ Run PyTorch-wrapper vs ONNX Runtime CPU checks:
 python -B tests/parity/test_audio_vae_encoder.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 python -B tests/parity/test_audio_vae_decoder.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 python -B tests/parity/test_prefill.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx
-python -B tests/parity/test_decode_step.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --precision fp32 --cache-seq 16 --max-cache-seq 64
+python -B tests/parity/test_decode_chunk.py --onnx-path models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx --precision fp32 --chunk-size 4 --cache-seq 16 --max-cache-seq 64
 ```
 
 PyTest environment-variable form:
@@ -165,7 +167,7 @@ PyTest environment-variable form:
 VOXCPM2_AUDIO_VAE_ENCODER_ONNX=models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx python -B -m pytest tests/parity/test_audio_vae_encoder.py
 VOXCPM2_AUDIO_VAE_DECODER_ONNX=models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx python -B -m pytest tests/parity/test_audio_vae_decoder.py
 VOXCPM2_PREFILL_ONNX=models/onnx/fp32/prefill/voxcpm2_prefill.onnx python -B -m pytest tests/parity/test_prefill.py
-VOXCPM2_DECODE_STEP_ONNX=models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx python -B -m pytest tests/parity/test_decode_step.py
+VOXCPM2_DECODE_CHUNK_ONNX=models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx python -B -m pytest tests/parity/test_decode_chunk.py
 ```
 
 ## Runtime Smoke

@@ -41,9 +41,10 @@ class _FakeSession:
 class _FakeSessions:
     def __init__(self, *, stop_after: int | None):
         self.decode_calls = 0
+        self.chunk_size = 4
         self.stop_after = stop_after
         self.prefill = _FakeSession(self._prefill_run)
-        self.decode_step = _FakeSession(self._decode_run)
+        self.decode_chunk = _FakeSession(self._decode_run)
         self.audio_decoder = _FakeSession(self._decoder_run)
 
     def _prefill_run(self, output_names, _inputs):
@@ -62,21 +63,31 @@ class _FakeSessions:
 
     def _decode_run(self, output_names, inputs):
         self.decode_calls += 1
-        should_stop = self.stop_after is not None and self.decode_calls >= self.stop_after
-        stop_logits = np.array([[0.0, 1.0 if should_stop else -1.0]], dtype=np.float32)
+        start_step = int(inputs["base_current_length"][0])
+        step_numbers = np.arange(start_step + 1, start_step + self.chunk_size + 1)
+        should_stop = (
+            step_numbers >= self.stop_after if self.stop_after is not None else np.zeros(self.chunk_size, dtype=bool)
+        )
+        stop_logits = np.stack(
+            [
+                np.zeros(self.chunk_size, dtype=np.float32),
+                np.where(should_stop, 1.0, -1.0).astype(np.float32),
+            ],
+            axis=-1,
+        )[None, :, :]
         values = {
-            "pred_audio_feature": np.full((1, 1, 1, 2), self.decode_calls, dtype=np.float32),
-            "decoder_latent": np.zeros((1, 2, 1), dtype=np.float32),
+            "pred_audio_feature": step_numbers.reshape(1, self.chunk_size, 1, 1).astype(np.float32).repeat(2, axis=3),
+            "decoder_latent": np.zeros((1, 2, self.chunk_size), dtype=np.float32),
             "stop_logits": stop_logits,
             "next_lm_hidden": inputs["lm_hidden"],
             "next_residual_hidden": inputs["residual_hidden"],
             "next_prefix_feat_cond": inputs["prefix_feat_cond"],
-            "base_k_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
-            "base_v_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
-            "next_base_current_length": inputs["base_current_length"] + 1,
-            "residual_k_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
-            "residual_v_update": np.zeros((1, 1, 1, 1, 1), dtype=np.float32),
-            "next_residual_current_length": inputs["residual_current_length"] + 1,
+            "base_k_update": np.zeros((1, 1, 1, self.chunk_size, 1), dtype=np.float32),
+            "base_v_update": np.zeros((1, 1, 1, self.chunk_size, 1), dtype=np.float32),
+            "next_base_current_length": inputs["base_current_length"] + self.chunk_size,
+            "residual_k_update": np.zeros((1, 1, 1, self.chunk_size, 1), dtype=np.float32),
+            "residual_v_update": np.zeros((1, 1, 1, self.chunk_size, 1), dtype=np.float32),
+            "next_residual_current_length": inputs["residual_current_length"] + self.chunk_size,
         }
         return [values[name] for name in output_names]
 
@@ -104,7 +115,7 @@ def test_decode_loop_stops_before_large_upper_bound() -> None:
     pipeline, sessions = _fake_pipeline(stop_after=3)
     result = pipeline.synthesize_with_metadata("hello", max_steps=1000, min_steps=0)
 
-    assert sessions.decode_calls == 3
+    assert sessions.decode_calls == 1
     assert result.metadata.decode_steps == 3
     assert result.metadata.stop_reason == "stop_logits"
     assert result.metadata.effective_max_steps == 1000
@@ -115,7 +126,7 @@ def test_auto_decode_loop_uses_safety_cap_without_stop() -> None:
     pipeline, sessions = _fake_pipeline(stop_after=None, safety_max_steps=5)
     result = pipeline.synthesize_with_metadata("hello", max_steps=0, min_steps=0)
 
-    assert sessions.decode_calls == 5
+    assert sessions.decode_calls == 2
     assert result.metadata.decode_steps == 5
     assert result.metadata.stop_reason == "safety_max_steps"
     assert result.metadata.effective_max_steps == 5

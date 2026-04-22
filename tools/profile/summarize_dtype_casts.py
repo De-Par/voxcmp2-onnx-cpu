@@ -77,7 +77,7 @@ def _node_key(path: Path, index: int, node: onnx.NodeProto) -> dict[str, Any]:
 
 
 def analyze_casts(path: Path) -> dict[str, Any]:
-    """Return a compact Cast-pattern summary for one ONNX model."""
+    """Return a compact Cast-pattern summary for one ONNX model"""
 
     model = onnx.load(str(path), load_external_data=False)
     value_dtypes = _value_dtype_map(model)

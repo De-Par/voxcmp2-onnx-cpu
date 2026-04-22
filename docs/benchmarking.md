@@ -104,8 +104,8 @@ ONNX runs additionally record:
 
 - host input-build time
 - prefill latency
-- one `decode_step` wall time per generated step
-- decode-step total / p50 / p90
+- one `decode_chunk` wall time per ONNX decode session call
+- decode-chunk total / p50 / p90
 - AudioVAE decoder latency
 
 Official API runs record load, total synthesis, decode steps, and audio stats. Official per-stage prefill/decode timing remains `null` because the public API does not expose the same module boundaries and the baseline must not patch official internals.
@@ -170,7 +170,7 @@ Code-site mapping:
 |---|---|
 | prefill | `src/export/export_prefill.py::VoxCPM2PrefillWrapper.forward` |
 | prefill cache outputs | `src/export/export_prefill.py::VoxCPM2PrefillWrapper._stack_cache` |
-| decode step | `src/export/export_decode_step.py::VoxCPM2DecodeStepWrapper.forward` |
+| decode chunk | `src/export/export_decode_chunk.py::VoxCPM2DecodeChunkWrapper.forward` |
 | decode attention | `src/export/export_decode_step.py::VoxCPM2DecodeStepWrapper._attention_step` |
 | decode cache movement | `src/runtime/pipeline.py::VoxCPM2OnnxPipeline.synthesize_with_metadata` |
 | audio encoder | `src/runtime/pipeline.py::VoxCPM2OnnxPipeline._encode_wav` |
@@ -185,7 +185,7 @@ A speed or output-duration mismatch is not automatically a BF16 failure. Known c
 - official API often runs in model-configured BF16 on CPU
 - official stop policy and ONNX host stop policy are equivalent in intent but exposed at different boundaries
 - official API can retry bad cases; benchmark keeps retries off unless requested
-- ONNX decode-step currently passes explicit state tensors through ORT sessions; future I/O binding and cache residency work may reduce overhead
+- ONNX decode-chunk currently passes explicit state tensors through ORT sessions; future I/O binding and cache residency work may reduce overhead
 
 With `--onnx-graph-optimization all`, ORT may warn that it cannot constant-fold `CastLike`. That means the optimizer left the node in the graph; it is not a synthesis failure.
 
@@ -193,6 +193,6 @@ With `--onnx-graph-optimization all`, ORT may warn that it cannot constant-fold 
 
 - One command writes JSON and Markdown baseline reports.
 - Baseline includes official API and current ONNX runtime.
-- Reports include load latency, prefill latency, decode-step latency, total synthesis latency, decode steps, output duration, and p50/p90 wall time.
+- Reports include load latency, prefill latency, decode-chunk latency, total synthesis latency, decode steps, output duration, and p50/p90 wall time.
 - Profiling report includes top nodes, op types, Cast hotspots, and cache-related hotspots.
 - No benchmark or profiling command changes model math, export path, or runtime semantics.

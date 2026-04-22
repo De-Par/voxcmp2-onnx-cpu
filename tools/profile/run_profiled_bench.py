@@ -81,7 +81,7 @@ def _onnx_paths(args: argparse.Namespace):
         audio_encoder=args.audio_encoder_onnx or defaults.audio_encoder,
         audio_decoder=args.audio_decoder_onnx or defaults.audio_decoder,
         prefill=args.prefill_onnx or defaults.prefill,
-        decode_step=args.decode_step_onnx or defaults.decode_step,
+        decode_chunk=args.decode_chunk_onnx or defaults.decode_chunk,
     )
 
 
@@ -104,7 +104,7 @@ def _create_pipeline(args: argparse.Namespace, profile_dir: Path):
 def _preload_all_sessions(pipeline: object) -> None:
     _ = pipeline.sessions.audio_encoder
     _ = pipeline.sessions.prefill
-    _ = pipeline.sessions.decode_step
+    _ = pipeline.sessions.decode_chunk
     _ = pipeline.sessions.audio_decoder
 
 
@@ -243,7 +243,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-encoder-onnx", type=Path, help="Override AudioVAEEncoder ONNX path.")
     parser.add_argument("--audio-decoder-onnx", type=Path, help="Override AudioVAEDecoder ONNX path.")
     parser.add_argument("--prefill-onnx", type=Path, help="Override VoxCPM2Prefill ONNX path.")
-    parser.add_argument("--decode-step-onnx", type=Path, help="Override VoxCPM2DecodeStep ONNX path.")
+    parser.add_argument("--decode-chunk-onnx", type=Path, help="Override production VoxCPM2DecodeChunk ONNX path.")
     return parser
 
 

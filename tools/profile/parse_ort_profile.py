@@ -37,7 +37,7 @@ def _load_profile(path: Path) -> list[dict[str, Any]]:
 
 def _module_from_path(path: Path) -> str:
     text = path.name.lower()
-    for module in ("audio_encoder", "audio_decoder", "decode_step", "prefill"):
+    for module in ("audio_encoder", "audio_decoder", "decode_chunk", "decode_step", "prefill"):
         if module in text:
             return module
     if "audio_vae_encoder" in text:
@@ -83,8 +83,8 @@ def _cache_reason(event_text: str, op_type: str, module: str) -> str | None:
     for keyword in CACHE_KEYWORDS:
         if keyword in event_text:
             return f"matched keyword {keyword!r}"
-    if module == "decode_step" and op_type in CACHE_OP_HINTS:
-        return f"decode_step {op_type} can participate in explicit cache/state movement"
+    if module in {"decode_chunk", "decode_step"} and op_type in CACHE_OP_HINTS:
+        return f"{module} {op_type} can participate in explicit cache/state movement"
     return None
 
 
@@ -107,12 +107,18 @@ def _code_sites(module: str, op_type: str, node_name: str, event_text: str) -> l
                     "reason": "prefill returns explicit base/residual K/V cache tensors",
                 }
             )
-    elif module == "decode_step":
+    elif module in {"decode_chunk", "decode_step"}:
+        wrapper_file = (
+            "src/export/export_decode_chunk.py" if module == "decode_chunk" else "src/export/export_decode_step.py"
+        )
+        wrapper_symbol = (
+            "VoxCPM2DecodeChunkWrapper.forward" if module == "decode_chunk" else "VoxCPM2DecodeStepWrapper.forward"
+        )
         sites.append(
             {
-                "file": "src/export/export_decode_step.py",
-                "symbol": "VoxCPM2DecodeStepWrapper.forward",
-                "reason": "decode-step graph is exported from this one-step wrapper",
+                "file": wrapper_file,
+                "symbol": wrapper_symbol,
+                "reason": f"{module} graph is exported from this wrapper",
             }
         )
         if op_type in {"Attention", "MatMul", "Gemm", "Softmax"} or "attention" in lowered:
@@ -120,7 +126,7 @@ def _code_sites(module: str, op_type: str, node_name: str, event_text: str) -> l
                 {
                     "file": "src/export/export_decode_step.py",
                     "symbol": "VoxCPM2DecodeStepWrapper._attention_step",
-                    "reason": "attention projections, SDPA, and output projection live here",
+                    "reason": "chunked decode reuses exact one-step attention math here",
                 }
             )
         if "cache" in lowered or op_type in CACHE_OP_HINTS:
@@ -128,7 +134,7 @@ def _code_sites(module: str, op_type: str, node_name: str, event_text: str) -> l
                 {
                     "file": "src/runtime/pipeline.py",
                     "symbol": "VoxCPM2OnnxPipeline.synthesize_with_metadata",
-                    "reason": "host loop passes explicit cache/state tensors between decode_step calls",
+                    "reason": "host loop passes explicit cache/state tensors between decode chunks",
                 }
             )
     elif module == "audio_encoder":
@@ -276,7 +282,7 @@ def _shortlist(nodes: Any, ops: Any, cache_nodes: Any) -> list[dict[str, str]]:
         items.append(
             {
                 "reason": f"cache/state movement hotspot: {top['module']}::{top['node_name']}",
-                "next_step": "review explicit cache tensor contract in decode_step wrapper and runtime loop",
+                "next_step": "review explicit cache tensor contract in decode chunk wrapper and runtime loop",
             }
         )
     cast_nodes = [item for item in node_list if item["op_type"] == "Cast" or "cast" in item["node_name"].lower()]

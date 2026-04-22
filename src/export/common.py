@@ -118,6 +118,21 @@ BF16_MODULE_POLICIES: dict[str, ModulePrecisionPolicy] = {
             "feature/hidden/cache-update outputs bf16->fp32",
         ),
     ),
+    "decode_chunk": ModulePrecisionPolicy(
+        bf16_compute_regions=(
+            "DiT conditioning projections",
+            "LocDiT/CFM solve",
+            "feature encoder",
+            "base LM decode steps",
+            "residual LM decode steps",
+            "stop head",
+        ),
+        fp32_islands=("rotary position embedding multiply/add",),
+        boundary_casts=(
+            "hidden/cache/noise/cfg fp32->bf16",
+            "chunk feature/hidden/cache-update outputs bf16->fp32",
+        ),
+    ),
 }
 
 
@@ -134,6 +149,7 @@ MODULE_OUTPUT_LAYOUTS: dict[str, ModuleOutputLayout] = {
     "audio_vae_decoder": ModuleOutputLayout("audio_vae_decoder", "audio_vae_decoder.onnx"),
     "prefill": ModuleOutputLayout("prefill", "voxcpm2_prefill.onnx"),
     "decode_step": ModuleOutputLayout("decode_step", "voxcpm2_decode_step.onnx"),
+    "decode_chunk": ModuleOutputLayout("decode_chunk", "voxcpm2_decode_chunk.onnx"),
 }
 
 
@@ -211,6 +227,41 @@ MODULE_EXPORT_CONTRACTS: dict[str, ModuleExportContract] = {
             "next_residual_current_length",
         ),
         state_semantics="consumes fixed-capacity caches and returns one-position cache updates plus new lengths",
+    ),
+    "decode_chunk": ModuleExportContract(
+        module_key="decode_chunk",
+        display_name="VoxCPM2DecodeChunk",
+        input_names=(
+            "lm_hidden",
+            "residual_hidden",
+            "prefix_feat_cond",
+            "base_k_cache",
+            "base_v_cache",
+            "base_current_length",
+            "residual_k_cache",
+            "residual_v_cache",
+            "residual_current_length",
+            "diffusion_noise",
+            "cfg_value",
+        ),
+        output_names=(
+            "pred_audio_feature",
+            "decoder_latent",
+            "stop_logits",
+            "next_lm_hidden",
+            "next_residual_hidden",
+            "next_prefix_feat_cond",
+            "base_k_update",
+            "base_v_update",
+            "next_base_current_length",
+            "residual_k_update",
+            "residual_v_update",
+            "next_residual_current_length",
+        ),
+        state_semantics=(
+            "consumes fixed-capacity caches and returns chunked feature, stop-logit, "
+            "and cache-update tensors plus final lengths"
+        ),
     ),
 }
 

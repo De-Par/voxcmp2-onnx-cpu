@@ -52,12 +52,12 @@ def test_cpu_only_runtime_smoke() -> None:
         pytest.skip(f"default ONNX artifacts are not available in this workspace: {exc}")
     _assert_no_new_forbidden_runtime_modules(forbidden_baseline)
 
-    assert set(paths) == {"audio_encoder", "audio_decoder", "prefill", "decode_step"}
+    assert set(paths) == {"audio_encoder", "audio_decoder", "prefill", "decode_chunk"}
     assert pipeline.sessions.created_session_names == ()
 
-    decode_inputs = {item.name for item in pipeline.sessions.decode_step.get_inputs()}
+    decode_inputs = {item.name for item in pipeline.sessions.decode_chunk.get_inputs()}
     if "base_current_length" not in decode_inputs:
-        pytest.skip("decode_step artifact uses the old grow-by-concat cache contract; re-export fixed-cache ONNX")
+        pytest.skip("decode_chunk artifact uses an old cache contract; re-export production ONNX")
 
     waveform = pipeline.synthesize(
         "Hello from VoxCPM2.",
@@ -122,7 +122,7 @@ def test_cpu_only_runtime_smoke() -> None:
         assert inputs["audio_features"].shape[:2] == (1, seq)
 
     created = set(pipeline.sessions.created_session_names)
-    assert {"audio_encoder", "prefill", "decode_step", "audio_decoder"}.issubset(created)
+    assert {"audio_encoder", "prefill", "decode_chunk", "audio_decoder"}.issubset(created)
     for name in created:
         session = getattr(pipeline.sessions, name)
         assert session.get_providers() == [CPU_PROVIDER]

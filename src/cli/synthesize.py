@@ -67,7 +67,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prefill-onnx", type=Path, default=defaults.prefill, help="VoxCPM2Prefill ONNX file.")
     parser.add_argument(
-        "--decode-step-onnx", type=Path, default=defaults.decode_step, help="VoxCPM2DecodeStep ONNX file."
+        "--decode-chunk-onnx",
+        type=Path,
+        default=defaults.decode_chunk,
+        help="Production VoxCPM2DecodeChunk ONNX file.",
     )
     parser.add_argument(
         "--max-steps",
@@ -78,9 +81,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-steps", type=int, default=8, help="Minimum decode steps before stop logits may end synthesis."
     )
-    parser.add_argument(
-        "--cfg-value", type=float, default=2.0, help="Classifier-free guidance value passed to decode_step."
-    )
+    parser.add_argument("--cfg-value", type=float, default=2.0, help="Classifier-free guidance value passed to decode.")
     parser.add_argument("--seed", type=int, default=0, help="NumPy RNG seed for host-supplied diffusion noise.")
     parser.add_argument(
         "--ort-graph-optimization",
@@ -124,7 +125,7 @@ def main() -> int:
         audio_encoder=args.audio_encoder_onnx,
         audio_decoder=args.audio_decoder_onnx,
         prefill=args.prefill_onnx,
-        decode_step=args.decode_step_onnx,
+        decode_chunk=args.decode_chunk_onnx,
     )
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts(
         model_path=args.model_path,

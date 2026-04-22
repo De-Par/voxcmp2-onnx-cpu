@@ -48,6 +48,7 @@ def test_exporter_constants_match_shared_contracts() -> None:
         "audio_vae_decoder": "src.export.export_audio_vae_decoder",
         "prefill": "src.export.export_prefill",
         "decode_step": "src.export.export_decode_step",
+        "decode_chunk": "src.export.export_decode_chunk",
     }
 
     for module_key, module_name in modules.items():

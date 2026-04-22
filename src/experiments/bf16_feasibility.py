@@ -33,9 +33,9 @@ DEFAULT_MODELS = {
     "audio_vae_encoder": REPO_ROOT / "models" / "onnx" / "fp32" / "audio_vae_encoder" / "audio_vae_encoder.onnx",
     "audio_vae_decoder": REPO_ROOT / "models" / "onnx" / "fp32" / "audio_vae_decoder" / "audio_vae_decoder.onnx",
     "prefill": REPO_ROOT / "models" / "onnx" / "fp32" / "prefill" / "voxcpm2_prefill.onnx",
-    "decode_step": REPO_ROOT / "models" / "onnx" / "fp32" / "decode_step" / "voxcpm2_decode_step.onnx",
+    "decode_chunk": REPO_ROOT / "models" / "onnx" / "fp32" / "decode_chunk" / "voxcpm2_decode_chunk.onnx",
 }
-LARGE_MODELS = {"prefill", "decode_step"}
+LARGE_MODELS = {"prefill", "decode_chunk"}
 
 DTYPE_SIZE_BYTES = {
     TensorProto.FLOAT: 4,
@@ -436,7 +436,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--include-large-models",
         action="store_true",
-        help="Allow conversion of prefill/decode_step. This can create multi-GB artifacts.",
+        help="Allow conversion of prefill/decode_chunk. This can create multi-GB artifacts.",
     )
     return parser
 

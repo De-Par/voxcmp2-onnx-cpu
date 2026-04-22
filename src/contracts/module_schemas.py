@@ -87,6 +87,27 @@ class VoxCPM2DecodeStepOutputs(TypedDict):
     residual_cache_update: TransformerCacheUpdateSpec
 
 
+class VoxCPM2DecodeChunkInputs(TypedDict):
+    lm_hidden: TensorSpec
+    residual_hidden: TensorSpec
+    prefix_feat_cond: TensorSpec
+    base_cache: TransformerCacheSpec
+    residual_cache: TransformerCacheSpec
+    diffusion_noise: TensorSpec
+    cfg_value: TensorSpec
+
+
+class VoxCPM2DecodeChunkOutputs(TypedDict):
+    pred_audio_feature: TensorSpec
+    decoder_latent: TensorSpec
+    stop_logits: TensorSpec
+    next_lm_hidden: TensorSpec
+    next_residual_hidden: TensorSpec
+    next_prefix_feat_cond: TensorSpec
+    base_cache_update: TransformerCacheUpdateSpec
+    residual_cache_update: TransformerCacheUpdateSpec
+
+
 def _cache(
     prefix: str, layers: str, *, seq_label: str = "cache_seq", length_name: str | None = None
 ) -> TransformerCacheSpec:
@@ -113,25 +134,25 @@ def _cache(
     }
 
 
-def _cache_update(prefix: str, layers: str) -> TransformerCacheUpdateSpec:
+def _cache_update(prefix: str, layers: str, *, update_seq_label: str = "1") -> TransformerCacheUpdateSpec:
     return {
         "key": TensorSpec(
             name=f"{prefix}_k_update",
             dtype="float32",
-            shape=(layers, "batch", "kv_heads", "1", "head_dim"),
-            description="One newly generated key position to write at current_length in host code.",
+            shape=(layers, "batch", "kv_heads", update_seq_label, "head_dim"),
+            description="Generated key positions to write at current_length in host code.",
         ),
         "value": TensorSpec(
             name=f"{prefix}_v_update",
             dtype="float32",
-            shape=(layers, "batch", "kv_heads", "1", "head_dim"),
-            description="One newly generated value position to write at current_length in host code.",
+            shape=(layers, "batch", "kv_heads", update_seq_label, "head_dim"),
+            description="Generated value positions to write at current_length in host code.",
         ),
         "next_length": TensorSpec(
             name=f"next_{prefix}_current_length",
             dtype="int64",
             shape=("1",),
-            description="Updated valid cache length after applying the one-position update.",
+            description="Updated valid cache length after applying the cache update.",
         ),
     }
 
@@ -210,13 +231,13 @@ VOXCPM2_PREFILL_OUTPUTS: VoxCPM2PrefillOutputs = {
         name="lm_hidden",
         dtype="float32",
         shape=("batch", "hidden_2048"),
-        description="Last base LM hidden state used to start decode_step.",
+        description="Last base LM hidden state used to start decode.",
     ),
     "residual_hidden": TensorSpec(
         name="residual_hidden",
         dtype="float32",
         shape=("batch", "hidden_2048"),
-        description="Last residual LM hidden state used to start decode_step.",
+        description="Last residual LM hidden state used to start decode.",
     ),
     "prefix_feat_cond": TensorSpec(
         name="prefix_feat_cond",
@@ -289,4 +310,45 @@ VOXCPM2_DECODE_STEP_OUTPUTS: VoxCPM2DecodeStepOutputs = {
     ),
     "base_cache_update": _cache_update("base", "base_layers_28"),
     "residual_cache_update": _cache_update("residual", "residual_layers_8"),
+}
+
+VOXCPM2_DECODE_CHUNK_INPUTS: VoxCPM2DecodeChunkInputs = {
+    "lm_hidden": VOXCPM2_PREFILL_OUTPUTS["lm_hidden"],
+    "residual_hidden": VOXCPM2_PREFILL_OUTPUTS["residual_hidden"],
+    "prefix_feat_cond": VOXCPM2_PREFILL_OUTPUTS["prefix_feat_cond"],
+    "base_cache": _cache("base", "base_layers_28"),
+    "residual_cache": _cache("residual", "residual_layers_8"),
+    "diffusion_noise": TensorSpec(
+        name="diffusion_noise",
+        dtype="float32",
+        shape=("chunk_size_4", "batch", "latent_dim_64", "patch_size_4"),
+        description="Host-supplied noise for each internal CFM sampling step in the production chunk.",
+    ),
+    "cfg_value": VOXCPM2_DECODE_STEP_INPUTS["cfg_value"],
+}
+
+VOXCPM2_DECODE_CHUNK_OUTPUTS: VoxCPM2DecodeChunkOutputs = {
+    "pred_audio_feature": TensorSpec(
+        name="pred_audio_feature",
+        dtype="float32",
+        shape=("batch", "chunk_size_4", "patch_size_4", "latent_dim_64"),
+        description="Generated audio-feature patches; host appends only accepted steps.",
+    ),
+    "decoder_latent": TensorSpec(
+        name="decoder_latent",
+        dtype="float32",
+        shape=("batch", "latent_dim_64", "chunk_size_4 * patch_size_4"),
+        description="Chunk features arranged for diagnostic decoder parity; production host rebuilds final layout.",
+    ),
+    "stop_logits": TensorSpec(
+        name="stop_logits",
+        dtype="float32",
+        shape=("batch", "chunk_size_4", "2"),
+        description="Per-step stop predictor logits; host applies argmax and min-length policy.",
+    ),
+    "next_lm_hidden": VOXCPM2_DECODE_STEP_OUTPUTS["next_lm_hidden"],
+    "next_residual_hidden": VOXCPM2_DECODE_STEP_OUTPUTS["next_residual_hidden"],
+    "next_prefix_feat_cond": VOXCPM2_DECODE_STEP_OUTPUTS["next_prefix_feat_cond"],
+    "base_cache_update": _cache_update("base", "base_layers_28", update_seq_label="chunk_size_4"),
+    "residual_cache_update": _cache_update("residual", "residual_layers_8", update_seq_label="chunk_size_4"),
 }
