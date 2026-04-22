@@ -144,7 +144,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     profile_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     _, make_reference_wav = _bench_helpers()
-    reference_wav = make_reference_wav(args.reference_wav.expanduser() if args.reference_wav else args.output_dir / "reference_16k.wav")
+    reference_wav = make_reference_wav(
+        args.reference_wav.expanduser() if args.reference_wav else args.output_dir / "reference_16k.wav"
+    )
     selected_cases = [_cases()[case_id] for case_id in args.cases]
 
     print("=" * 72, flush=True)
@@ -212,9 +214,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/profile"), help="Output directory.")
     parser.add_argument("--profile-dir", type=Path, help="ORT profile directory. Defaults to <output-dir>/profiles.")
-    parser.add_argument("--json-report", type=Path, help="JSON report path. Defaults to <output-dir>/profiled_bench.json.")
-    parser.add_argument("--markdown-report", type=Path, help="Markdown report path. Defaults to <output-dir>/hotspots.md.")
-    parser.add_argument("--cases", nargs="+", choices=CASE_IDS, default=["controllable_clone_short"], help="Cases to run.")
+    parser.add_argument(
+        "--json-report", type=Path, help="JSON report path. Defaults to <output-dir>/profiled_bench.json."
+    )
+    parser.add_argument(
+        "--markdown-report", type=Path, help="Markdown report path. Defaults to <output-dir>/hotspots.md."
+    )
+    parser.add_argument(
+        "--cases", nargs="+", choices=CASE_IDS, default=["controllable_clone_short"], help="Cases to run."
+    )
     parser.add_argument("--top-n", type=int, default=20, help="Ranked hotspot count per section.")
     parser.add_argument("--seed", type=int, default=0, help="Host diffusion-noise RNG seed.")
     parser.add_argument("--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or HF id.")
@@ -224,7 +232,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-steps", type=int, default=8, help="ONNX min decode steps before stop logits.")
     parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local model files.")
     parser.add_argument("--allow-download", action="store_false", dest="local_files_only", help="Allow HF downloads.")
-    parser.add_argument("--preload-sessions", action=argparse.BooleanOptionalAction, default=True, help="Preload sessions.")
+    parser.add_argument(
+        "--preload-sessions", action=argparse.BooleanOptionalAction, default=True, help="Preload sessions."
+    )
     parser.add_argument("--onnx-graph-optimization", choices=graph_choices, default="all", help="ORT graph opt.")
     parser.add_argument("--onnx-execution-mode", choices=execution_choices, default="sequential", help="ORT mode.")
     parser.add_argument("--onnx-log-severity", choices=log_choices, default="error", help="ORT log severity.")

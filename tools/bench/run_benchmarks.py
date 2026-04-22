@@ -295,7 +295,9 @@ def _run_onnx_case(
             "residual_k_cache": state["residual_k_cache"],
             "residual_v_cache": state["residual_v_cache"],
             "residual_cache_length": state["residual_cache_length"],
-            "diffusion_noise": rng.standard_normal((1, pipeline.config.feat_dim, pipeline.config.patch_size), dtype=np.float32),
+            "diffusion_noise": rng.standard_normal(
+                (1, pipeline.config.feat_dim, pipeline.config.patch_size), dtype=np.float32
+            ),
             "cfg_value": np.array([args.cfg_value], dtype=np.float32),
         }
         step_start = time.perf_counter()
@@ -327,7 +329,9 @@ def _run_onnx_case(
     feature_seq = np.concatenate(generated, axis=1)
     decoder_latent = np.transpose(feature_seq, (0, 3, 1, 2)).reshape(1, pipeline.config.feat_dim, -1)
     sr_cond = np.array([pipeline.config.decode_sample_rate], dtype=np.int32)
-    waveform = pipeline.sessions.audio_decoder.run(["waveform"], {"latent": decoder_latent, "sr_cond": sr_cond})[0][0, 0]
+    waveform = pipeline.sessions.audio_decoder.run(["waveform"], {"latent": decoder_latent, "sr_cond": sr_cond})[0][
+        0, 0
+    ]
     audio_decode_seconds = time.perf_counter() - decoder_start
 
     total_synth_seconds = time.perf_counter() - synth_start
@@ -481,9 +485,7 @@ def _aggregate_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for item in items
             if item["latencies"]["decode_step_total_seconds"] is not None
         ]
-        decode_step_values = [
-            value for item in items for value in item["latencies"].get("decode_step_seconds", [])
-        ]
+        decode_step_values = [value for item in items for value in item["latencies"].get("decode_step_seconds", [])]
         audio_decode_values = [
             item["latencies"]["audio_decode_seconds"]
             for item in items
@@ -536,7 +538,9 @@ def _comparison_rows(aggregates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def _make_report(args: argparse.Namespace, runs: list[dict[str, Any]], aggregates: list[dict[str, Any]]) -> dict[str, Any]:
+def _make_report(
+    args: argparse.Namespace, runs: list[dict[str, Any]], aggregates: list[dict[str, Any]]
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "created_unix_seconds": round(time.time(), 3),
@@ -696,7 +700,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     args.output_dir = args.output_dir.expanduser()
     json_report = (args.json_report or (args.output_dir / "baseline.json")).expanduser()
     markdown_report = (args.markdown_report or (args.output_dir / "baseline.md")).expanduser()
-    reference_wav = _make_reference_wav(args.reference_wav.expanduser() if args.reference_wav else args.output_dir / "reference_16k.wav")
+    reference_wav = _make_reference_wav(
+        args.reference_wav.expanduser() if args.reference_wav else args.output_dir / "reference_16k.wav"
+    )
     cases = _selected_cases(args, reference_wav)
     _print_progress_header(args, json_report, markdown_report)
 
