@@ -212,6 +212,16 @@ For clone modes, provide `--reference-wav`, and for ultimate clone also provide 
 
 `--max-steps` is optional. The default `--max-steps 0` means "run until the model emits stop logits" with an internal safety cap. `--max-steps 1 --min-steps 0` is only for very fast graph-load smoke checks and writes a deliberately truncated WAV.
 
+The synthesis CLI also exposes CPU-only ONNX Runtime tuning flags:
+
+- `--ort-graph-optimization {disable,basic,extended,all}`
+- `--ort-execution-mode {sequential,parallel}`
+- `--ort-log-severity {verbose,info,warning,error,fatal}`
+- `--ort-intra-op-threads N`
+- `--ort-inter-op-threads N`
+
+Defaults stay conservative for parity work: graph optimizations disabled, sequential execution mode, and ORT default thread scheduling.
+
 ## Benchmark Variants
 
 Compare the official VoxCPM2 API, ONNX FP32, and experimental ONNX BF16 artifacts:
@@ -238,6 +248,24 @@ The benchmark prints human-readable progress and saves JSON to `artifacts/bench/
 
 BF16 paths default to `models/onnx/bf16/*`. Production FP32 defaults are not changed.
 
+For readable timing, the benchmark preloads the ONNX sessions used by the selected mode during the `load` phase. Pass `--no-onnx-preload-sessions` only when you want first-request latency, where session creation is included in `synth`.
+
+For ONNX CPU performance experiments, pass explicit ORT options:
+
+```bash
+python -B src/bench/compare_pipelines.py \
+  --text "Hello from VoxCPM2." \
+  --output-dir artifacts/bench_ort_tuned \
+  --variants onnx_fp32 onnx_bf16 \
+  --onnx-graph-optimization all \
+  --onnx-execution-mode sequential \
+  --onnx-log-severity error \
+  --onnx-intra-op-threads 8 \
+  --onnx-inter-op-threads 1
+```
+
+See [docs/performance_tuning.md](docs/performance_tuning.md) for interpretation of ONNX-vs-origin benchmark gaps and tuning guidance.
+
 ## Trace Official Generate Path
 
 Use the trace tool before changing module boundaries:
@@ -263,6 +291,7 @@ Trace records are compact JSONL events with stage name, input/output shapes, dty
 - [docs/prefill_blockers.md](docs/prefill_blockers.md): prefill export boundary, mode inputs, and blockers.
 - [docs/audio_vae_encoder_onnx_report.md](docs/audio_vae_encoder_onnx_report.md): encoder blocker isolation and parity notes.
 - [docs/bf16_feasibility.md](docs/bf16_feasibility.md): experimental BF16 initializer-size analysis and rollback rules.
+- [docs/performance_tuning.md](docs/performance_tuning.md): ONNX-vs-origin benchmark interpretation and CPU ORT tuning flags.
 - [docs/torch_dependency_audit.md](docs/torch_dependency_audit.md): runtime PyTorch dependency audit.
 - [docs/platform_support.md](docs/platform_support.md): platform matrix and verification commands.
 
