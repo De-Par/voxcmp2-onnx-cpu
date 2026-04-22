@@ -1,18 +1,17 @@
+#!/usr/bin/env bash
+#
 # Source this file from the repository root:
 #
 #   source setup.sh base
-#   OR
 #   source setup.sh dev
 #
-# The script creates/activates .venv and installs the project in editable mode.
-# It is intentionally sourced so the virtual environment remains active in the
-# caller's shell after setup completes.
+# The script creates/activates .venv, restores the VoxCPM submodule when it is
+# missing, and installs this project in editable mode. It is intentionally
+# sourced so the virtual environment remains active in the caller's shell.
 #
 # Modes:
 #   base = core runtime dependencies + export/parity dependencies
 #   dev  = base + developer tools
-
-#!/usr/bin/env bash
 
 IS_SOURCED=0
 (return 0 2>/dev/null) && IS_SOURCED=1
@@ -65,11 +64,22 @@ python -m pip install --upgrade "pip>=24,<26" "setuptools>=70,<81" "wheel>=0.43,
 
 python -m pip install -e ".[${_VOXCPM2_EXTRAS}]" || return 1
 
+if [ ! -d "third_party/VoxCPM" ] && [ -f ".gitmodules" ]; then
+    if command -v git >/dev/null 2>&1; then
+        echo "[INFO] third_party/VoxCPM is missing; initializing git submodules."
+        git submodule update --init --recursive || return 1
+    else
+        echo "[ERROR] third_party/VoxCPM is missing and git is not available." >&2
+        echo "[ERROR] Install git, then run: git submodule update --init --recursive" >&2
+        return 1
+    fi
+fi
+
 if [ -d "third_party/VoxCPM" ]; then
     python -m pip install -e "third_party/VoxCPM" --no-deps || return 1
 else
-    echo "third_party/VoxCPM is missing. Initialize submodules before export/parity work:" >&2
-    echo "  git submodule update --init --recursive" >&2
+    echo "[ERROR] third_party/VoxCPM is still missing after setup." >&2
+    return 1
 fi
 
 rm -rf ./*.egg-info

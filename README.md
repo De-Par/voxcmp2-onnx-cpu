@@ -1,142 +1,169 @@
-# VoxCPM2 ONNX CPU Runtime
+# VoxCPM2 ONNX CPU
 
-This repository is a CPU-only ONNX Runtime porting workspace for VoxCPM2. It keeps VoxCPM2 neural modules in separate ONNX graphs and keeps host responsibilities, such as tokenization, WAV I/O, resampling, and decode orchestration, in Python.
+CPU-only ONNX Runtime export and runtime workspace for VoxCPM2.
 
-The production goal is dual precision:
+This repository keeps VoxCPM2 neural work in separate ONNX graphs and keeps host responsibilities in Python: text normalization boundary, tokenizer use, WAV I/O, resampling, reference/prompt orchestration, decode loop, stop policy, random diffusion noise, and WAV writing.
 
-- optimized FP32 ONNX artifacts
-- optimized BF16 ONNX artifacts
-- one CPU-only production runtime path for both artifact families
-- quality and CPU performance comparison against the official VoxCPM2 API
+## Status
 
-Target platforms:
+| Area | Status |
+|---|---|
+| Target model | VoxCPM2 |
+| Runtime target | ONNX Runtime CPU only |
+| Platforms | macOS arm64, Linux x86_64 / arm64, Windows x86_64 / arm64 |
+| V1 modes | text-to-speech, voice design, controllable clone, ultimate clone |
+| Deferred | streaming |
+| Precision targets | production FP32 and production BF16 |
+| Non-goals | GPU/CoreML/CUDA/DirectML/MPS, quantization, monolithic ONNX graph |
 
-- macOS arm64
-- Linux x86_64 / arm64
-- Windows x86_64 / arm64
+## Architecture
 
-GPU, CoreML, DirectML, CUDA, quantization, streaming, and a single monolithic ONNX graph are out of scope for v1.
+The runtime is split into four ONNX modules:
+
+```text
+AudioVAEEncoder   reference/prompt waveform -> latent audio features
+VoxCPM2Prefill    text/audio prompt tensors -> hidden states + initial KV caches
+VoxCPM2DecodeStep one autoregressive audio-feature step + explicit state updates
+AudioVAEDecoder   generated latent features -> waveform
+```
+
+Host code owns everything that is not neural module execution:
+
+- text normalization boundary and tokenizer-driven sequence assembly
+- WAV reading/writing and resampling
+- reference and prompt-audio path construction
+- decode loop and stop policy
+- fixed-capacity cache mutation between decode steps
+- NumPy random diffusion noise
+
+The full contract is in [docs/architecture.md](docs/architecture.md).
 
 ## Repository Layout
 
 ```text
-src/export/      PyTorch -> ONNX export wrappers
-src/runtime/     CPU-only ONNX Runtime sessions and pipeline
-src/cli/         User-facing synthesis CLI
-src/parity/      Official VoxCPM2 generate-path tracing tool
-src/contracts/   Typed module-boundary schemas
-tests/parity/    PyTorch vs ONNX Runtime module parity checks
-tests/smoke/     End-to-end CPU-only runtime smoke test
-docs/            Contracts, boundary specs, blockers, platform notes
-REPORT.md        Trace-based call map and ONNX boundary rationale
+src/export/       PyTorch -> ONNX export wrappers and precision profiles
+src/runtime/      CPU-only ONNX Runtime session factory and pipeline
+src/cli/          synthesis CLI
+src/bench/        quick official/API vs ONNX benchmark
+src/parity/       official generate-path tracing
+src/contracts/    Typed module-boundary schemas
+tools/bench/      production baseline benchmark runner
+tools/profile/    ORT profiling and Cast-summary tools
+tests/export/     export contract and dtype cleanup tests
+tests/parity/     PyTorch-wrapper vs ONNX Runtime parity checks
+tests/smoke/      CPU-only runtime smoke checks
+docs/             self-contained project documentation
+third_party/      local VoxCPM submodule checkout
+models/           local ONNX exports and optional HF snapshots
+artifacts/        local reports, logs, WAVs, traces, and benchmark outputs
 ```
 
-Ignored local state is split by purpose:
+`third_party/`, `models/`, `artifacts/`, `traces/`, and `.venv/` are local/generated state and are ignored by git.
 
-- `models/onnx/fp32/`: production FP32 ONNX exports and external data.
-- `models/onnx/bf16/`: production BF16 compute ONNX exports and external data. Storage-only BF16 experiments live under `artifacts/experiments/`.
-- `models/hf/`: optional local Hugging Face snapshots if you do not use the default cache.
-- `artifacts/`: reports, logs, benchmark WAV/JSON, and smoke output samples.
-- `traces/`: generate-path JSONL traces.
-- `.venv/` and `third_party/`: local environment and upstream checkout.
+## From Fresh Clone To Exported Models
 
-ONNX files, external data, downloaded weights, traces, and generated reports are not source files and are intentionally ignored by git.
+The complete path from a clean clone to ready ONNX models is:
 
-## Architecture
+1. Clone repository and submodule.
+2. Create Python environment and install dependencies.
+3. Download official VoxCPM2 weights.
+4. Export FP32 and BF16 ONNX artifacts into `models/onnx`.
+5. Run graph checks, parity checks, smoke synthesis, and benchmarks.
 
-The v1 runtime is split into four ONNX modules:
-
-1. `AudioVAEEncoder`: reference/prompt WAV tensor -> audio latent features.
-2. `VoxCPM2Prefill`: text/audio aligned sequence -> initial hidden states and explicit K/V caches.
-3. `VoxCPM2DecodeStep`: one autoregressive audio-feature step -> predicted feature, stop logits, next state.
-4. `AudioVAEDecoder`: generated latent feature sequence -> waveform.
-
-Host code owns:
-
-- text normalization
-- tokenizer loading and token ID assembly
-- audio loading, mono conversion, resampling, and padding
-- reference/prompt path assembly
-- decode loop and stop policy
-- random diffusion noise
-- WAV writing
-
-This split is documented in [docs/module_boundaries.md](docs/module_boundaries.md) and [docs/decode_state_contract.md](docs/decode_state_contract.md).
-
-## Setup
-
-Clone with the upstream VoxCPM submodule:
+### 1. Clone
 
 ```bash
 git clone --recursive <repo-url> voxcpm2-onnx-cpu
 cd voxcpm2-onnx-cpu
 ```
 
-If the repository is already cloned:
+If the repository is already cloned or `third_party/VoxCPM` was deleted:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-Create and activate the environment by sourcing the setup script with an explicit mode:
+`source setup.sh <mode>` also tries to restore the submodule if it is missing.
+
+### 2. Install Environment
+
+Use Python 3.11, 3.12, or 3.13. Python 3.12 is the locally used baseline.
+
+Base mode installs runtime plus export/parity dependencies:
 
 ```bash
 source setup.sh base
 ```
 
-Setup modes:
-
-- `base`: core runtime dependencies plus export/parity dependencies.
-- `dev`: `base` plus developer tools such as `pytest` and `ruff`.
+Development mode adds pytest and ruff:
 
 ```bash
 source setup.sh dev
 ```
 
-Both modes install this project in editable mode. If `third_party/VoxCPM` exists, setup also installs it in editable mode with `--no-deps`; this exposes the official `voxcpm` package while dependency versions remain controlled by this repository's `pyproject.toml`.
+The script:
 
-On Windows without a Unix-compatible shell, use the equivalent manual commands:
+- creates `.venv`
+- activates it in the current shell
+- installs this project in editable mode
+- initializes `third_party/VoxCPM` if missing
+- installs `third_party/VoxCPM` in editable mode with `--no-deps`
+
+Manual Windows PowerShell equivalent:
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade "pip>=24,<26" "setuptools>=70,<81" "wheel>=0.43,<1"
+git submodule update --init --recursive
 python -m pip install -e ".[export]"
 python -m pip install -e "third_party/VoxCPM" --no-deps
 
-# Developer mode:
-python -m pip install -e ".[dev,export]"
-python -m pip install -e "third_party/VoxCPM" --no-deps
+# Developer tools:
+python -m pip install -e ".[export,dev]"
 ```
 
-## Download Weights
+### 3. Download VoxCPM2 Weights
 
-The runtime defaults to local files only. Download VoxCPM2 weights once:
+Download weights into the Hugging Face cache:
 
 ```bash
 python -c "from voxcpm import VoxCPM; VoxCPM.from_pretrained('openbmb/VoxCPM2', load_denoiser=False)"
 ```
 
-To force scripts to download missing files, pass `--allow-download` where available.
+Export scripts default to local files only. If a script should fetch missing files directly, pass `--allow-download`.
 
-## Export ONNX Modules
+### 4. Export ONNX Models
 
-Export one complete precision family with the unified export pipeline:
+Export production FP32:
 
 ```bash
 python -B src/export/export_all.py --precision fp32
+```
+
+Export production BF16:
+
+```bash
 python -B src/export/export_all.py --precision bf16
 ```
 
-All exports use:
+Expected output layout:
 
-- `torch.onnx.export(..., dynamo=True)`
-- `external_data=True`
-- the shared precision profiles in `src/export/common.py`
-- no graph optimization
-- no quantization
+```text
+models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
+models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
+models/onnx/fp32/prefill/voxcpm2_prefill.onnx
+models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
 
-Module-level exports are also available:
+models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx
+models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx
+models/onnx/bf16/prefill/voxcpm2_prefill.onnx
+models/onnx/bf16/decode_step/voxcpm2_decode_step.onnx
+```
+
+Large `.onnx.data` files must stay next to their `.onnx` files.
+
+Module-level exports:
 
 ```bash
 python -B src/export/export_audio_vae_encoder.py --precision fp32
@@ -145,13 +172,9 @@ python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
 python -B src/export/export_decode_step.py --precision fp32 --current-length 16 --max-cache-seq 64
 ```
 
-Pass `--precision bf16` to write the BF16 artifact family under `models/onnx/bf16`.
+### 5. Validate Exported Graphs
 
-Large ONNX external data files must remain next to their `.onnx` files.
-
-## Check Exported Graphs
-
-Run path-based ONNX checker and one CPU ORT invocation per module:
+Path-based ONNX checker plus one ORT CPU run per module:
 
 ```bash
 python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
@@ -160,11 +183,7 @@ python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/vo
 python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16 --max-cache-seq 64
 ```
 
-Each checker prints input names, output names, dtype, dynamic/static dimensions, CPU provider list, and compact output statistics.
-
-## Parity Checks
-
-Parity scripts compare the PyTorch export wrapper against ONNX Runtime CPU:
+Parity against PyTorch export wrappers:
 
 ```bash
 python -B tests/parity/test_audio_vae_encoder.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
@@ -173,116 +192,56 @@ python -B tests/parity/test_prefill.py --onnx-path models/onnx/fp32/prefill/voxc
 python -B tests/parity/test_decode_step.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --precision fp32 --cache-seq 16 --max-cache-seq 64
 ```
 
-PyTest wrappers are also available through environment variables:
-
-```bash
-VOXCPM2_AUDIO_VAE_ENCODER_ONNX=models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx pytest tests/parity/test_audio_vae_encoder.py
-VOXCPM2_AUDIO_VAE_DECODER_ONNX=models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx pytest tests/parity/test_audio_vae_decoder.py
-VOXCPM2_PREFILL_ONNX=models/onnx/fp32/prefill/voxcpm2_prefill.onnx pytest tests/parity/test_prefill.py
-VOXCPM2_DECODE_STEP_ONNX=models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx pytest tests/parity/test_decode_step.py
-```
-
-## CPU-Only Runtime Smoke
-
-Run one short end-to-end synthesis through already exported ONNX modules:
+CPU-only runtime smoke:
 
 ```bash
 python -B tests/smoke/test_cpu_only_runtime.py
 ```
 
-Expected output:
+Expected after models exist:
 
 ```text
 cpu_only_runtime_smoke=ok
 ```
 
-The smoke test verifies:
-
-- all required ONNX artifacts and external data files exist
-- sessions are created lazily
-- every ONNX Runtime session uses only `CPUExecutionProvider`
-- runtime orchestration does not import PyTorch, Transformers, `soundfile`, or `librosa`
-- one short text-only inference reaches waveform
-- prefill input assembly supports text-only, voice design, controllable clone, and ultimate clone pathways
-
 ## Synthesize WAV
+
+Text-only:
 
 ```bash
 python -B src/cli/synthesize.py \
   --text "Hello from VoxCPM2." \
-  --output artifacts/samples/runtime_sample.wav \
+  --output artifacts/samples/text_only.wav \
   --mode text_only
 ```
 
-For voice design:
+Voice design:
 
 ```bash
 python -B src/cli/synthesize.py \
-  --mode voice_design \
-  --voice-design "calm voice" \
   --text "Hello from VoxCPM2." \
-  --output artifacts/samples/voice_design.wav
+  --output artifacts/samples/voice_design.wav \
+  --mode voice_design \
+  --voice-design "calm voice"
 ```
 
-For clone modes, provide `--reference-wav`, and for ultimate clone also provide `--prompt-wav` and `--prompt-text`.
+Clone modes require `--reference-wav`. Ultimate clone also requires `--prompt-wav` and `--prompt-text`.
 
-`--max-steps` is optional. The default `--max-steps 0` means "run until the model emits stop logits" with an internal safety cap. `--max-steps 1 --min-steps 0` is only for very fast graph-load smoke checks and writes a deliberately truncated WAV.
+`--max-steps 0` is the default and means "run until `stop_logits` ends the stream" with an internal safety cap. `--max-steps 1 --min-steps 0` is only for graph-load smoke checks and writes intentionally truncated audio.
 
-The synthesis CLI also exposes CPU-only ONNX Runtime tuning flags:
+## Benchmark And Profile
 
-- `--ort-graph-optimization {disable,basic,extended,all}`
-- `--ort-execution-mode {sequential,parallel}`
-- `--ort-log-severity {verbose,info,warning,error,fatal}`
-- `--ort-intra-op-threads N`
-- `--ort-inter-op-threads N`
-
-Defaults stay conservative for parity work: graph optimizations disabled, sequential execution mode, and ORT default thread scheduling.
-
-## Benchmark Variants
-
-Compare the official VoxCPM2 API, ONNX FP32, and ONNX BF16 compute artifacts:
+Quick comparison:
 
 ```bash
 python -B src/bench/compare_pipelines.py \
   --text "Hello from VoxCPM2." \
   --output-dir artifacts/bench \
+  --report-json artifacts/bench/report.json \
   --variants orig onnx_fp32 onnx_bf16
 ```
 
-The benchmark prints human-readable progress and saves JSON to `artifacts/bench/report.json` unless `--report-json` overrides the path. Each result contains:
-
-- `output_wav`
-- `load_seconds`
-- `synth_seconds`
-- `total_seconds`
-- `sample_rate`
-- `samples`
-- `duration_seconds`
-- `peak`
-- `rms`
-- `decode_steps` / `stop_reason` for ONNX variants
-
-BF16 paths default to `models/onnx/bf16/*`. Production FP32 defaults are not changed.
-
-For readable timing, the benchmark preloads the ONNX sessions used by the selected mode during the `load` phase. Pass `--no-onnx-preload-sessions` only when you want first-request latency, where session creation is included in `synth`.
-
-For ONNX CPU performance experiments, pass explicit ORT options:
-
-```bash
-python -B src/bench/compare_pipelines.py \
-  --text "Hello from VoxCPM2." \
-  --output-dir artifacts/bench_ort_tuned \
-  --variants onnx_fp32 onnx_bf16 \
-  --onnx-graph-optimization all \
-  --onnx-execution-mode sequential \
-  --onnx-log-severity error \
-  --onnx-intra-op-threads 8 \
-  --onnx-inter-op-threads 1
-```
-
-See [docs/performance_tuning.md](docs/performance_tuning.md) for interpretation of ONNX-vs-origin benchmark gaps and tuning guidance.
-
-For the stricter production baseline matrix, use:
+Production baseline matrix:
 
 ```bash
 python -B tools/bench/run_benchmarks.py \
@@ -293,9 +252,7 @@ python -B tools/bench/run_benchmarks.py \
   --repeats 3
 ```
 
-See [docs/perf_baseline.md](docs/perf_baseline.md) for the fixed case matrix and metric definitions.
-
-For ORT node-level profiling:
+ORT node profiling:
 
 ```bash
 python -B tools/profile/run_profiled_bench.py \
@@ -304,53 +261,56 @@ python -B tools/profile/run_profiled_bench.py \
   --top-n 20
 ```
 
-See [docs/profile_hotspots.md](docs/profile_hotspots.md) for profile parsing and hotspot report details.
-
-## Trace Official Generate Path
-
-Use the trace tool before changing module boundaries:
+Cast and dtype cleanup summary:
 
 ```bash
-python -B src/parity/trace_generate.py \
-  --model-path openbmb/VoxCPM2 \
-  --mode plain_tts \
-  --text "Hello." \
-  --trace-output traces/plain_tts.jsonl
+python -B tools/profile/summarize_dtype_casts.py \
+  --after-root models/onnx \
+  --profile-json artifacts/profile/parsed_hotspots.json \
+  --json-report artifacts/reports/dtype_cleanup_casts.json \
+  --markdown-report artifacts/reports/dtype_cleanup_casts.md
 ```
 
-Trace records are compact JSONL events with stage name, input/output shapes, dtypes, reference/prompt pathway flags, and Python module/function names. Full tensor values are not logged.
+Benchmark details are in [docs/benchmarking.md](docs/benchmarking.md).
 
-## Documentation Map
+## Development Checks
 
-- [REPORT.md](REPORT.md): traced call map and selected ONNX boundary rationale.
-- [docs/export_contract.md](docs/export_contract.md): export scope, rules, acceptance criteria, and non-goals.
-- [docs/runtime_contract.md](docs/runtime_contract.md): runtime responsibilities and CPU-only constraints.
-- [docs/feature_matrix.md](docs/feature_matrix.md): v1 feature status and deferred work.
-- [docs/precision_strategy.md](docs/precision_strategy.md): production FP32/BF16 policy and final acceptance criteria.
-- [docs/export_precision_profiles.md](docs/export_precision_profiles.md): shared FP32/BF16 export profiles and one-command export workflow.
-- [docs/bf16_compute_strategy.md](docs/bf16_compute_strategy.md): production BF16 compute regions, FP32 islands, and anti-storage-only checks.
-- [docs/module_boundaries.md](docs/module_boundaries.md): module split and tensor boundaries.
-- [docs/decode_state_contract.md](docs/decode_state_contract.md): explicit decode-step state and cache contract.
-- [docs/fixed_cache_report.md](docs/fixed_cache_report.md): fixed-capacity decode cache change, traffic formulas, and measurement gate.
-- [docs/prefill_blockers.md](docs/prefill_blockers.md): prefill export boundary, mode inputs, and blockers.
-- [docs/audio_vae_encoder_onnx_report.md](docs/audio_vae_encoder_onnx_report.md): encoder blocker isolation and parity notes.
-- [docs/bf16_feasibility.md](docs/bf16_feasibility.md): legacy storage-only BF16 initializer-size analysis and rollback rules.
-- [docs/performance_tuning.md](docs/performance_tuning.md): ONNX-vs-origin benchmark interpretation and CPU ORT tuning flags.
-- [docs/perf_baseline.md](docs/perf_baseline.md): fixed production baseline matrix and reporting contract.
-- [docs/profile_hotspots.md](docs/profile_hotspots.md): ORT profiling workflow and hotspot report contract.
-- [docs/torch_dependency_audit.md](docs/torch_dependency_audit.md): runtime PyTorch dependency audit.
-- [docs/platform_support.md](docs/platform_support.md): platform matrix and verification commands.
+These checks work on a clean checkout before model export:
+
+```bash
+ruff check .
+python -B -m compileall -q src tests tools
+python -B -m pytest
+```
+
+The full pytest suite skips model-dependent smoke/parity checks when ONNX artifacts are absent.
+
+Check runtime stays free of PyTorch:
+
+```bash
+rg -n "\btorch\b|import torch|from torch|soundfile|librosa|transformers" src/runtime src/cli tests/smoke
+```
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md): feature matrix, traced generate path, module boundaries, runtime contract, fixed cache, platform and dependency rules.
+- [docs/exporting.md](docs/exporting.md): export contract, artifact layout, module blockers, checker commands, parity commands.
+- [docs/precision.md](docs/precision.md): FP32/BF16 policy, BF16 compute regions, dtype cleanup, legacy storage-only BF16 experiment.
+- [docs/benchmarking.md](docs/benchmarking.md): benchmark matrix, ORT tuning, profiling, hotspot interpretation.
 
 ## Release Checklist
 
 Before publishing a release candidate:
 
 ```bash
-python -B -m py_compile $(find src tests -name '*.py' -print)
+ruff check .
+python -B -m compileall -q src tests tools
+python -B -m pytest
+python -B src/export/export_all.py --precision fp32
+python -B src/export/export_all.py --precision bf16
 python -B tests/smoke/test_cpu_only_runtime.py
-python -B src/cli/synthesize.py --text "Hello from VoxCPM2." --output artifacts/samples/runtime_sample.wav --mode text_only
-rg -n "import torch|from torch|soundfile|librosa|transformers" src/runtime src/cli tests/smoke
+python -B tools/bench/run_benchmarks.py --output-dir artifacts/perf_baseline --variants official onnx --repeats 3
 git diff --check
 ```
 
-Run the same smoke commands on every target platform class before claiming platform release support.
+Run the runtime smoke and synthesis commands on every target platform class before claiming release support.

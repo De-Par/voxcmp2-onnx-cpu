@@ -475,7 +475,7 @@ def _print_summary(results: list[BenchResult]) -> None:
 def _parser() -> argparse.ArgumentParser:
     _, _, _, graph_optimization_choices, execution_mode_choices, log_severity_choices = _runtime_classes()
     parser = argparse.ArgumentParser(
-        description="Benchmark official VoxCPM2 API, ONNX FP32, and experimental ONNX BF16 pipelines.",
+        description="Benchmark official VoxCPM2 API, ONNX FP32, and ONNX BF16 pipelines.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--text", required=True, help="Target text to synthesize.")
