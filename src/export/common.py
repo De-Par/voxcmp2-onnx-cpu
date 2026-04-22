@@ -257,6 +257,20 @@ def configure_module_precision(module: Any, precision: PrecisionProfile) -> Any:
     return module.to(device="cpu", dtype=precision.torch_compute_dtype()).eval()
 
 
+def cast_tensor_if_needed(tensor: Any, dtype: Any) -> Any:
+    """Return ``tensor`` unchanged when it already has ``dtype``.
+
+    Export wrappers use this instead of unconditional ``Tensor.to(dtype=...)``
+    so FP32 exports do not pick up no-op Cast nodes. BF16 exports still emit the
+    intentional graph-boundary and FP32-island casts required by the precision
+    policy.
+    """
+
+    if getattr(tensor, "dtype", None) == dtype:
+        return tensor
+    return tensor.to(dtype=dtype)
+
+
 def add_precision_metadata(
     report: dict[str, Any],
     precision: PrecisionProfile,

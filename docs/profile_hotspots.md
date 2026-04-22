@@ -86,6 +86,8 @@ The parser derives the shortlist from actual profile data. Common categories to 
 4. AudioVAE encode/decode convolution blocks when clone/reference paths are active.
 5. Host-visible session split overhead, if total wall time is high but individual node time is not.
 
+Cast/CastLike cleanup policy and graph-count reporting are tracked in `docs/dtype_cleanup_report.md`.
+
 ## Acceptance Criteria
 
 - `hotspots.md` has a top-20 node table.

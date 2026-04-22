@@ -16,6 +16,7 @@ try:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
         export_onnx_graph,
@@ -28,6 +29,7 @@ except ImportError:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
         export_onnx_graph,
@@ -55,9 +57,9 @@ class AudioVAEDecoderWrapper(torch.nn.Module):
         self.host_float_dtype = self.precision.torch_host_float_dtype()
 
     def forward(self, latent: torch.Tensor, sr_cond: torch.Tensor) -> torch.Tensor:
-        latent = latent.to(dtype=self.compute_dtype)
+        latent = cast_tensor_if_needed(latent, self.compute_dtype)
         waveform = self.audio_vae.decode(latent, sr_cond)
-        return waveform.to(dtype=self.host_float_dtype)
+        return cast_tensor_if_needed(waveform, self.host_float_dtype)
 
 
 def _install_upstream_import_path() -> None:

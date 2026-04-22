@@ -50,6 +50,8 @@ Both profiles are exported by the same wrapper code paths. Precision policy may 
 
 Host-visible floating tensors remain `float32` for both profiles in the current production runtime contract. This keeps the runtime path identical while allowing the export wrapper to change internal compute dtype.
 
+Wrapper dtype guards must use conditional casts only. A cast is valid when the source dtype differs from the target dtype; no-op `.to(float32)` calls in FP32 exports are treated as redundant exporter artifacts. The cleanup policy and graph-count workflow are documented in `docs/dtype_cleanup_report.md`.
+
 ## Precision Profiles
 
 ### `fp32`

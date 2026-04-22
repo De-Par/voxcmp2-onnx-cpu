@@ -16,6 +16,7 @@ try:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
         export_onnx_graph,
@@ -28,6 +29,7 @@ except ImportError:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         configure_module_precision,
         ensure_output_dir,
         export_onnx_graph,
@@ -92,10 +94,10 @@ class VoxCPM2PrefillWrapper(torch.nn.Module):
         # The export boundary is intentionally tensor-only. Host code has
         # already handled tokenization, language text, reference/prompt audio
         # alignment, and masks before this wrapper is called.
-        text_tokens = text_tokens.to(dtype=torch.long)
-        text_mask = text_mask.to(dtype=self.compute_dtype)
-        audio_features = audio_features.to(dtype=self.compute_dtype)
-        audio_mask = audio_mask.to(dtype=self.compute_dtype)
+        text_tokens = cast_tensor_if_needed(text_tokens, torch.long)
+        text_mask = cast_tensor_if_needed(text_mask, self.compute_dtype)
+        audio_features = cast_tensor_if_needed(audio_features, self.compute_dtype)
+        audio_mask = cast_tensor_if_needed(audio_mask, self.compute_dtype)
 
         prefill_encoder = getattr(model, "_feat_encoder_raw", model.feat_encoder)
         feat_embed = prefill_encoder(audio_features)
@@ -133,14 +135,14 @@ class VoxCPM2PrefillWrapper(torch.nn.Module):
         residual_cache_length = cache_length.clone()
 
         return (
-            lm_hidden.to(dtype=self.host_float_dtype),
-            residual_hidden.to(dtype=self.host_float_dtype),
-            prefix_feat_cond.to(dtype=self.host_float_dtype),
-            base_k_cache.to(dtype=self.host_float_dtype),
-            base_v_cache.to(dtype=self.host_float_dtype),
+            cast_tensor_if_needed(lm_hidden, self.host_float_dtype),
+            cast_tensor_if_needed(residual_hidden, self.host_float_dtype),
+            cast_tensor_if_needed(prefix_feat_cond, self.host_float_dtype),
+            cast_tensor_if_needed(base_k_cache, self.host_float_dtype),
+            cast_tensor_if_needed(base_v_cache, self.host_float_dtype),
             cache_length,
-            residual_k_cache.to(dtype=self.host_float_dtype),
-            residual_v_cache.to(dtype=self.host_float_dtype),
+            cast_tensor_if_needed(residual_k_cache, self.host_float_dtype),
+            cast_tensor_if_needed(residual_v_cache, self.host_float_dtype),
             residual_cache_length,
         )
 

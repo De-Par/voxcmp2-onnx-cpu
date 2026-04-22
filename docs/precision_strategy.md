@@ -126,6 +126,8 @@ The comparison must report:
 
 BF16 promotion requires evidence that Cast/dtype churn is not the dominant bottleneck.
 
+No-op casts are not allowed as part of the production policy. Export wrappers must skip dtype conversion when the tensor already has the target dtype; required graph-boundary casts and documented FP32 islands must remain explicit and measurable. See `docs/dtype_cleanup_report.md` for the cleanup classification and cast-count workflow.
+
 ## Final Goal Acceptance Criteria
 
 The project reaches the production precision goal when:

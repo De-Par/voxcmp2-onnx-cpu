@@ -21,6 +21,7 @@ from src.export.common import (
 )
 from src.export.export_audio_vae_decoder import AudioVAEDecoderWrapper
 from src.export.export_audio_vae_encoder import AudioVAEEncoderWrapper
+from tools.profile.summarize_dtype_casts import analyze_casts
 
 
 class _FakeEncoder(torch.nn.Module):
@@ -118,3 +119,8 @@ def test_optional_bf16_onnx_graphs_have_no_initializer_cast_back_pattern() -> No
         assert model_path.is_file(), model_path
         storage_only_casts = _storage_only_bf16_to_float_casts(model_path)
         assert storage_only_casts == [], {"model": str(model_path), "casts": storage_only_casts[:20]}
+        cast_report = analyze_casts(model_path)
+        assert cast_report["fp32_bf16_ping_pong"]["count"] == 0, {
+            "model": str(model_path),
+            "samples": cast_report["fp32_bf16_ping_pong"]["samples"][:5],
+        }

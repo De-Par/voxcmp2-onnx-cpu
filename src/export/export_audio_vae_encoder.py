@@ -15,6 +15,7 @@ try:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         ensure_output_dir,
         export_onnx_graph,
         get_precision_profile,
@@ -26,6 +27,7 @@ except ImportError:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         ensure_output_dir,
         export_onnx_graph,
         get_precision_profile,
@@ -71,9 +73,9 @@ class AudioVAEEncoderWrapper(torch.nn.Module):
         self.host_float_dtype = self.precision.torch_host_float_dtype()
 
     def forward(self, waveform: torch.Tensor) -> torch.Tensor:
-        waveform = waveform.to(dtype=self.compute_dtype)
+        waveform = cast_tensor_if_needed(waveform, self.compute_dtype)
         latent = self.audio_vae.encoder(waveform)["mu"]
-        return latent.to(dtype=self.host_float_dtype)
+        return cast_tensor_if_needed(latent, self.host_float_dtype)
 
 
 def _dynamic_shapes() -> dict[str, dict[int, Any]]:

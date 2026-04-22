@@ -17,6 +17,7 @@ try:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         ensure_output_dir,
         export_onnx_graph,
         get_precision_profile,
@@ -28,6 +29,7 @@ except ImportError:
         MODULE_EXPORT_CONTRACTS,
         PrecisionProfile,
         add_precision_argument,
+        cast_tensor_if_needed,
         ensure_output_dir,
         export_onnx_graph,
         get_precision_profile,
@@ -70,13 +72,13 @@ def _apply_rotary_pos_emb(
     sin: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     orig_dtype = q.dtype
-    q = q.to(torch.float32)
-    k = k.to(torch.float32)
-    cos = cos.to(torch.float32)
-    sin = sin.to(torch.float32)
+    q = cast_tensor_if_needed(q, torch.float32)
+    k = cast_tensor_if_needed(k, torch.float32)
+    cos = cast_tensor_if_needed(cos, torch.float32)
+    sin = cast_tensor_if_needed(sin, torch.float32)
     q_embed = (q * cos) + (_rotate_half(q) * sin)
     k_embed = (k * cos) + (_rotate_half(k) * sin)
-    return q_embed.to(orig_dtype), k_embed.to(orig_dtype)
+    return cast_tensor_if_needed(q_embed, orig_dtype), cast_tensor_if_needed(k_embed, orig_dtype)
 
 
 class VoxCPM2DecodeStepWrapper(torch.nn.Module):
@@ -155,7 +157,7 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         k_cache: torch.Tensor,
         v_cache: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        position_id = current_length.to(dtype=torch.long)
+        position_id = cast_tensor_if_needed(current_length, torch.long)
         if lm.rope_emb is not None:
             position_emb = lm.rope_emb(position_id)
         else:
@@ -217,15 +219,15 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         model = self.model
         # Host code supplies FP32 tensors for both production profiles. The
         # wrapper localizes profile-specific compute dtype at the graph edge.
-        lm_hidden = lm_hidden.to(dtype=self.compute_dtype)
-        residual_hidden = residual_hidden.to(dtype=self.compute_dtype)
-        prefix_feat_cond = prefix_feat_cond.to(dtype=self.compute_dtype)
-        base_k_cache = base_k_cache.to(dtype=self.compute_dtype)
-        base_v_cache = base_v_cache.to(dtype=self.compute_dtype)
-        residual_k_cache = residual_k_cache.to(dtype=self.compute_dtype)
-        residual_v_cache = residual_v_cache.to(dtype=self.compute_dtype)
-        diffusion_noise = diffusion_noise.to(dtype=self.compute_dtype)
-        cfg_value = cfg_value.to(dtype=self.compute_dtype)
+        lm_hidden = cast_tensor_if_needed(lm_hidden, self.compute_dtype)
+        residual_hidden = cast_tensor_if_needed(residual_hidden, self.compute_dtype)
+        prefix_feat_cond = cast_tensor_if_needed(prefix_feat_cond, self.compute_dtype)
+        base_k_cache = cast_tensor_if_needed(base_k_cache, self.compute_dtype)
+        base_v_cache = cast_tensor_if_needed(base_v_cache, self.compute_dtype)
+        residual_k_cache = cast_tensor_if_needed(residual_k_cache, self.compute_dtype)
+        residual_v_cache = cast_tensor_if_needed(residual_v_cache, self.compute_dtype)
+        diffusion_noise = cast_tensor_if_needed(diffusion_noise, self.compute_dtype)
+        cfg_value = cast_tensor_if_needed(cfg_value, self.compute_dtype)
 
         dit_hidden_1 = model.lm_to_dit_proj(lm_hidden)
         dit_hidden_2 = model.res_to_dit_proj(residual_hidden)
@@ -233,7 +235,7 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
 
         decoder_latent = model.feat_decoder.solve_euler(
             x=diffusion_noise,
-            t_span=self.t_span.to(device=diffusion_noise.device, dtype=diffusion_noise.dtype),
+            t_span=cast_tensor_if_needed(self.t_span, diffusion_noise.dtype),
             mu=dit_hidden,
             cond=prefix_feat_cond.transpose(1, 2).contiguous(),
             cfg_value=cfg_value.reshape(()),
@@ -270,17 +272,17 @@ class VoxCPM2DecodeStepWrapper(torch.nn.Module):
         )
 
         return (
-            pred_audio_feature.to(dtype=self.host_float_dtype),
-            decoder_latent.to(dtype=self.host_float_dtype),
-            stop_logits.to(dtype=self.host_float_dtype),
-            next_lm_hidden.to(dtype=self.host_float_dtype),
-            next_residual_hidden.to(dtype=self.host_float_dtype),
-            pred_feat.to(dtype=self.host_float_dtype),
-            base_k_update.to(dtype=self.host_float_dtype),
-            base_v_update.to(dtype=self.host_float_dtype),
+            cast_tensor_if_needed(pred_audio_feature, self.host_float_dtype),
+            cast_tensor_if_needed(decoder_latent, self.host_float_dtype),
+            cast_tensor_if_needed(stop_logits, self.host_float_dtype),
+            cast_tensor_if_needed(next_lm_hidden, self.host_float_dtype),
+            cast_tensor_if_needed(next_residual_hidden, self.host_float_dtype),
+            cast_tensor_if_needed(pred_feat, self.host_float_dtype),
+            cast_tensor_if_needed(base_k_update, self.host_float_dtype),
+            cast_tensor_if_needed(base_v_update, self.host_float_dtype),
             next_base_current_length,
-            residual_k_update.to(dtype=self.host_float_dtype),
-            residual_v_update.to(dtype=self.host_float_dtype),
+            cast_tensor_if_needed(residual_k_update, self.host_float_dtype),
+            cast_tensor_if_needed(residual_v_update, self.host_float_dtype),
             next_residual_current_length,
         )
 
