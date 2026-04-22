@@ -1,8 +1,6 @@
-# Exporting And Validation
+# 📦 Exporting And Validation
 
-This page is the export contract and validation guide for VoxCPM2 CPU-only ONNX artifacts.
-
-## Export Scope
+## 🎯 Export Scope
 
 The export target is four neural ONNX modules:
 
@@ -13,7 +11,7 @@ The export target is four neural ONNX modules:
 
 Host code remains responsible for text normalization, tokenization, WAV I/O, resampling, prompt/reference orchestration, random diffusion noise, decode loop, stop policy, and WAV writing.
 
-## Required Rules
+## 📏 Required Rules
 
 - Use `torch.onnx.export(..., dynamo=True)`.
 - Save large weights with `external_data=True`.
@@ -26,25 +24,48 @@ Host code remains responsible for text normalization, tokenization, WAV I/O, res
 - Keep FP32 and BF16 public graph contracts identical.
 - Use the fixed-capacity decode cache contract from `docs/architecture.md`.
 
-## Artifact Layout
+## 🗂️ Artifact Layout
 
 ```text
-models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
-models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
-models/onnx/fp32/prefill/voxcpm2_prefill.onnx
-models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx
-
-models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx
-models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx
-models/onnx/bf16/prefill/voxcpm2_prefill.onnx
-models/onnx/bf16/decode_chunk/voxcpm2_decode_chunk.onnx
+models/
+└── onnx/
+    ├── fp32/
+    │   ├── audio_vae_encoder/
+    │   │   ├── audio_vae_encoder.onnx
+    |   |   └── audio_vae_encoder.onnx.data
+    │   ├── audio_vae_decoder/
+    │   │   ├── audio_vae_decoder.onnx
+    |   |   └── audio_vae_decoder.onnx.data
+    │   ├── prefill/
+    │   │   ├── voxcpm2_prefill.onnx
+    |   |   └── voxcpm2_prefill.onnx.data
+    │   └── decode_chunk/
+    │       ├── voxcpm2_decode_chunk.onnx
+    |       └── voxcpm2_decode_chunk.onnx.data
+    └── bf16/
+        └── ...
 ```
 
 External data files must remain next to their `.onnx` files.
 
 The shared source of truth for module names, paths, input/output contracts, precision profiles, and shape reports is `src/export/common.py`.
 
-## One-Command Export
+## 🚀 One-Command Export
+
+```mermaid
+flowchart LR
+    A["export_all.py"] --> B["FP32 artifacts"]
+    A --> C["BF16 artifacts"]
+    B --> D["checker + ORT run"]
+    C --> D
+    D --> E["parity + smoke"]
+
+    style A fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#F59E0B,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+    style D fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
+    style E fill:#DC2626,stroke:#000000,stroke-width:2px,color:#ffffff
+```
 
 Export production FP32:
 
@@ -76,7 +97,7 @@ python -B src/export/export_decode_chunk.py --precision fp32 --chunk-size 4 --cu
 
 Use `--precision bf16` for the BF16 family.
 
-## Module Notes And Blockers
+## 🧩 Module Notes And Blockers
 
 ### AudioVAE Encoder
 
@@ -137,7 +158,7 @@ The graph takes fixed-capacity cache tensors, valid lengths, and host-supplied d
 
 `VoxCPM2DecodeStep` remains available as an internal one-step export/parity utility. Production runtime and `export_all.py` use `VoxCPM2DecodeChunk`.
 
-## Runtime Checkers
+## 🛠️ Runtime Checkers
 
 After export, run path-based ONNX checker and one ORT CPU invocation per module:
 
@@ -150,7 +171,7 @@ python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/fp32/decod
 
 Each checker logs input names, output names, dtype, dynamic/static dims, CPU providers, and compact output statistics. Large models must use path-based `onnx.checker.check_model(str(path))`.
 
-## Parity Checks
+## ⚖️ Parity Checks
 
 Run PyTorch-wrapper vs ONNX Runtime CPU checks:
 
@@ -170,7 +191,7 @@ VOXCPM2_PREFILL_ONNX=models/onnx/fp32/prefill/voxcpm2_prefill.onnx python -B -m 
 VOXCPM2_DECODE_CHUNK_ONNX=models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx python -B -m pytest tests/parity/test_decode_chunk.py
 ```
 
-## Runtime Smoke
+## 💨 Runtime Smoke
 
 ```bash
 python -B tests/smoke/test_cpu_only_runtime.py
@@ -188,7 +209,7 @@ On a clean checkout without exported models, the pytest version skips this smoke
 python -B -m pytest tests/smoke/test_cpu_only_runtime.py
 ```
 
-## Acceptance Criteria
+## ✅ Acceptance Criteria
 
 - All four modules export for FP32 and BF16.
 - ONNX checker passes for every graph.
