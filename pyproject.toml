@@ -65,7 +65,7 @@ namespaces = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-q"
+addopts = "-q -p no:capture"
 
 [tool.ruff]
 line-length = 120
