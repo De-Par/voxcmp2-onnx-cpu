@@ -23,7 +23,7 @@ The runtime is split into four ONNX modules:
 ```text
 AudioVAEEncoder   reference/prompt waveform -> latent audio features
 VoxCPM2Prefill    text/audio prompt tensors -> hidden states + initial KV caches
-VoxCPM2DecodeStep one autoregressive audio-feature step + explicit state updates
+VoxCPM2DecodeChunk four exact autoregressive audio-feature steps + explicit state updates
 AudioVAEDecoder   generated latent features -> waveform
 ```
 
@@ -33,7 +33,7 @@ Host code owns everything that is not neural module execution:
 - WAV reading/writing and resampling
 - reference and prompt-audio path construction
 - decode loop and stop policy
-- fixed-capacity cache mutation between decode steps
+- fixed-capacity cache mutation between decode chunks
 - NumPy random diffusion noise
 
 The full contract is in [docs/architecture.md](docs/architecture.md).
@@ -153,12 +153,12 @@ Expected output layout:
 models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 models/onnx/fp32/prefill/voxcpm2_prefill.onnx
-models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx
+models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx
 
 models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx
 models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx
 models/onnx/bf16/prefill/voxcpm2_prefill.onnx
-models/onnx/bf16/decode_step/voxcpm2_decode_step.onnx
+models/onnx/bf16/decode_chunk/voxcpm2_decode_chunk.onnx
 ```
 
 Large `.onnx.data` files must stay next to their `.onnx` files.
@@ -169,7 +169,7 @@ Module-level exports:
 python -B src/export/export_audio_vae_encoder.py --precision fp32
 python -B src/export/export_audio_vae_decoder.py --precision fp32
 python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
-python -B src/export/export_decode_step.py --precision fp32 --current-length 16 --max-cache-seq 64
+python -B src/export/export_decode_chunk.py --precision fp32 --chunk-size 4 --current-length 16 --max-cache-seq 64
 ```
 
 ### 5. Validate Exported Graphs
@@ -180,7 +180,7 @@ Path-based ONNX checker plus one ORT CPU run per module:
 python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
-python -B src/runtime/run_decode_step_ort.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --cache-seq 16 --max-cache-seq 64
+python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx --chunk-size 4 --cache-seq 16 --max-cache-seq 64
 ```
 
 Parity against PyTorch export wrappers:
@@ -189,7 +189,7 @@ Parity against PyTorch export wrappers:
 python -B tests/parity/test_audio_vae_encoder.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 python -B tests/parity/test_audio_vae_decoder.py --onnx-path models/onnx/fp32/audio_vae_decoder/audio_vae_decoder.onnx
 python -B tests/parity/test_prefill.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx
-python -B tests/parity/test_decode_step.py --onnx-path models/onnx/fp32/decode_step/voxcpm2_decode_step.onnx --precision fp32 --cache-seq 16 --max-cache-seq 64
+python -B tests/parity/test_decode_chunk.py --onnx-path models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx --precision fp32 --chunk-size 4 --cache-seq 16 --max-cache-seq 64
 ```
 
 CPU-only runtime smoke:
