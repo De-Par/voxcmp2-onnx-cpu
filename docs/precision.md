@@ -1,13 +1,17 @@
-# Precision Strategy
-
-This page defines the production FP32/BF16 policy for VoxCPM2 CPU-only ONNX artifacts.
+# 🎯 Precision Strategy
 
 ## Production Targets
 
 The project has two production artifact families:
+```mermaid
+flowchart LR
+    A["shared runtime path"] --> B["FP32 ONNX artifacts"]
+    A --> C["BF16 ONNX artifacts"]
 
-- FP32 ONNX artifacts
-- BF16 ONNX artifacts
+    style A fill:#10B981,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#F59E0B,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+```
 
 FP32 is the correctness anchor. BF16 is a parallel production target, not a replacement for FP32 and not a storage-only final state.
 
@@ -21,7 +25,7 @@ Both families must use:
 - the same feature coverage
 - the same benchmark and quality case matrix
 
-## Precision Profiles
+## 📋 Precision Profiles
 
 The profile registry is in `src/export/common.py`.
 
@@ -32,7 +36,7 @@ The profile registry is in `src/export/common.py`.
 
 Host-visible floating tensors remain FP32 for both profiles. This keeps the runtime path identical and localizes precision decisions inside export wrappers and graph metadata.
 
-## BF16 Compute Policy
+## 🧠 BF16 Compute Policy
 
 Production BF16 must:
 
@@ -50,13 +54,34 @@ Allowed mixed-precision reasons:
 
 Forbidden as production BF16:
 
-```text
-BF16 initializer -> Cast to FLOAT -> FLOAT compute
+```mermaid
+flowchart LR
+    A["BF16 initializer"] --> B["Cast to FLOAT"] --> C["FLOAT compute"]
+
+    style A fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
 ```
 
 That pattern is storage-only and gives no BF16 compute benefit.
 
-## Module BF16 Regions
+## 🧩 Module BF16 Regions
+
+```mermaid
+flowchart LR
+    A["AudioVAEEncoder"] --> E["host-visible FP32 boundaries"]
+    B["AudioVAEDecoder"] --> E
+    C["VoxCPM2Prefill"] --> E
+    D["VoxCPM2DecodeChunk"] --> E
+    F["small explicit FP32 islands<br/>only when justified"] --> E
+
+    style A fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
+    style B fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
+    style D fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
+    style E fill:#DC2626,stroke:#000000,stroke-width:2px,color:#ffffff
+    style F fill:#7C3AED,stroke:#000000,stroke-width:2px,color:#ffffff
+```
 
 | module | BF16 compute candidates | FP32 islands | boundary casts |
 |---|---|---|---|
@@ -67,7 +92,7 @@ That pattern is storage-only and gives no BF16 compute benefit.
 
 The rotary island is intentionally small and isolated. It casts q/k/cos/sin to FP32 for rotary multiply/add and casts q/k back to the active compute dtype.
 
-## Dtype Cleanup Policy
+## 🧹 Dtype Cleanup Policy
 
 No-op casts are not allowed in production exports. Export wrappers must skip dtype conversion when the tensor already has the target dtype.
 
@@ -103,7 +128,7 @@ python -B tools/profile/summarize_dtype_casts.py \
   --markdown-report artifacts/reports/dtype_cleanup_casts.md
 ```
 
-## Legacy BF16 Storage Experiment
+## 🗃️ Legacy BF16 Storage Experiment
 
 `src/experiments/bf16_feasibility.py` is retained only for historical storage feasibility analysis.
 
@@ -135,7 +160,7 @@ python -B src/experiments/bf16_feasibility.py \
 
 Historic finding: storage-only conversion roughly halves large initializer bytes but adds many BF16-to-FP32 Cast nodes. That is useful for disk-size analysis, not production compute.
 
-## Verification
+## 🔬 Verification
 
 Static precision policy tests:
 
@@ -152,7 +177,7 @@ python -B -m pytest tests/parity/test_bf16_compute_path.py
 
 Windows PowerShell uses `;` instead of `:` in `VOXCPM2_BF16_ONNX_PATHS`.
 
-## Final Acceptance Criteria
+## ✅ Final Acceptance Criteria
 
 - Optimized FP32 artifacts exist for all four modules.
 - Optimized BF16 artifacts exist for all four modules.
