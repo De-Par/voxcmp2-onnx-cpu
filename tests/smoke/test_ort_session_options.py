@@ -42,6 +42,8 @@ def test_ort_session_options_are_configurable_without_creating_sessions() -> Non
         "log_severity_level": "warning",
         "intra_op_num_threads": 2,
         "inter_op_num_threads": 1,
+        "enable_profiling": False,
+        "profile_file_prefix": None,
     }
 
     options = factory._session_options()

@@ -68,6 +68,8 @@ class OrtSessionFactory:
     log_severity_level: str = "warning"
     intra_op_num_threads: int | None = None
     inter_op_num_threads: int | None = None
+    enable_profiling: bool = False
+    profile_file_prefix: Path | None = None
     _sessions: dict[str, ort.InferenceSession] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -111,7 +113,7 @@ class OrtSessionFactory:
     def decode_step(self) -> ort.InferenceSession:
         return self._get("decode_step", self.paths.decode_step)
 
-    def _session_options(self) -> ort.SessionOptions:
+    def _session_options(self, session_name: str | None = None) -> ort.SessionOptions:
         options = ort.SessionOptions()
         graph_optimization_level = self._resolved_graph_optimization_level()
         try:
@@ -135,9 +137,15 @@ class OrtSessionFactory:
             ) from exc
         self._set_thread_option(options, "intra_op_num_threads", self.intra_op_num_threads)
         self._set_thread_option(options, "inter_op_num_threads", self.inter_op_num_threads)
+        if self.enable_profiling:
+            options.enable_profiling = True
+            if self.profile_file_prefix is not None:
+                profile_prefix = self._profile_prefix_for_session(session_name or "session")
+                profile_prefix.parent.mkdir(parents=True, exist_ok=True)
+                options.profile_file_prefix = str(profile_prefix)
         return options
 
-    def options_summary(self) -> dict[str, int | str | None]:
+    def options_summary(self) -> dict[str, bool | int | str | None]:
         return {
             "provider": CPU_PROVIDER,
             "graph_optimization_level": self._resolved_graph_optimization_level(),
@@ -145,7 +153,17 @@ class OrtSessionFactory:
             "log_severity_level": self.log_severity_level,
             "intra_op_num_threads": self.intra_op_num_threads,
             "inter_op_num_threads": self.inter_op_num_threads,
+            "enable_profiling": self.enable_profiling,
+            "profile_file_prefix": str(self.profile_file_prefix) if self.profile_file_prefix else None,
         }
+
+    def end_profiling(self) -> dict[str, Path]:
+        profile_paths: dict[str, Path] = {}
+        for name, session in self._sessions.items():
+            profile_path = session.end_profiling()
+            if profile_path:
+                profile_paths[name] = Path(profile_path).expanduser().resolve()
+        return profile_paths
 
     def _resolved_graph_optimization_level(self) -> str:
         # Backward-compatible shim for older callers that only passed the
@@ -164,6 +182,13 @@ class OrtSessionFactory:
             raise ValueError(f"{name} must be >= 0; use 0 or omit it for ORT default scheduling")
         setattr(options, name, value)
 
+    def _profile_prefix_for_session(self, session_name: str) -> Path:
+        assert self.profile_file_prefix is not None
+        expanded = self.profile_file_prefix.expanduser()
+        if expanded.suffix:
+            return expanded.with_name(f"{expanded.stem}_{session_name}{expanded.suffix}")
+        return expanded / f"ort_profile_{session_name}"
+
     def _get(self, name: str, path: Path) -> ort.InferenceSession:
         if name not in self._sessions:
             self._assert_path(name, path)
@@ -171,7 +196,7 @@ class OrtSessionFactory:
             # fallback on machines that happen to have GPU/CoreML packages.
             session = ort.InferenceSession(
                 str(path),
-                sess_options=self._session_options(),
+                sess_options=self._session_options(name),
                 providers=[CPU_PROVIDER],
             )
             self._assert_cpu_only(session, name)

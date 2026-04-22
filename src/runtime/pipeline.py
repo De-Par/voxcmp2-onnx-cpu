@@ -144,6 +144,8 @@ class VoxCPM2OnnxPipeline:
         log_severity_level: str = "warning",
         intra_op_num_threads: int | None = None,
         inter_op_num_threads: int | None = None,
+        enable_profiling: bool = False,
+        profile_file_prefix: Path | None = None,
     ) -> "VoxCPM2OnnxPipeline":
         config = VoxCPM2RuntimeConfig(model_path=model_path, local_files_only=local_files_only)
         sessions = OrtSessionFactory(
@@ -153,6 +155,8 @@ class VoxCPM2OnnxPipeline:
             log_severity_level=log_severity_level,
             intra_op_num_threads=intra_op_num_threads,
             inter_op_num_threads=inter_op_num_threads,
+            enable_profiling=enable_profiling,
+            profile_file_prefix=profile_file_prefix,
         )
         return cls(sessions=sessions, config=config)
 
