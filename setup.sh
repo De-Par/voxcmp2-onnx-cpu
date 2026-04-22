@@ -41,7 +41,7 @@ fi
 
 cd "${PROJECT_ROOT}" || return 1
 
-_VOXCPM2_MODE="${1:"base"}"
+_VOXCPM2_MODE="${1:-base}"
 case "$_VOXCPM2_MODE" in
   base)
         _VOXCPM2_EXTRAS="export"
