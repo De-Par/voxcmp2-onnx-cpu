@@ -286,7 +286,9 @@ class VoxCPM2OnnxPipeline:
         chunk_size = self.config.decode_chunk_size
         diffusion_noise = np.empty((chunk_size, 1, self.config.feat_dim, self.config.patch_size), dtype=np.float32)
         cfg_tensor = np.array([cfg_value], dtype=np.float32)
-        feature_buffer = np.empty((1, effective_max_steps, self.config.patch_size, self.config.feat_dim), dtype=np.float32)
+        feature_buffer = np.empty(
+            (1, effective_max_steps, self.config.patch_size, self.config.feat_dim), dtype=np.float32
+        )
         decode_inputs = {
             "lm_hidden": state["lm_hidden"],
             "residual_hidden": state["residual_hidden"],
@@ -399,7 +401,7 @@ class VoxCPM2OnnxPipeline:
 
     @staticmethod
     def _fill_standard_normal(rng: np.random.Generator, target: np.ndarray) -> None:
-        """Fill an existing FP32 buffer with Gaussian noise for one decode chunk."""
+        """Fill an existing FP32 buffer with Gaussian noise for one decode chunk"""
 
         try:
             rng.standard_normal(size=target.shape, dtype=target.dtype, out=target)

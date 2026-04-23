@@ -14,6 +14,7 @@ import io
 import json
 import platform
 import random
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -486,7 +487,8 @@ def _run_case(
     reference_wav: Path,
     repeat_index: int,
 ) -> dict[str, Any]:
-    output_wav = args.output_dir / "wavs" / f"{loaded.variant}_{case.case_id}_r{repeat_index + 1:02d}.wav"
+    prefix = f"{args.run_id}_" if args.run_id else ""
+    output_wav = args.output_dir / "wavs" / f"{prefix}{loaded.variant}_{case.case_id}_r{repeat_index + 1:02d}.wav"
     seed = args.seed
     if loaded.variant == "official":
         return _run_official_case(args, loaded, case, reference_wav, output_wav, seed)
@@ -735,6 +737,8 @@ def _print_progress_header(args: argparse.Namespace, json_report: Path, markdown
     print("VoxCPM2 production baseline", flush=True)
     print("=" * 72, flush=True)
     print(f"variants       : {', '.join(args.variants)}", flush=True)
+    if args.run_id:
+        print(f"run_id         : {args.run_id}", flush=True)
     print(f"cases          : {', '.join(args.cases)}", flush=True)
     print(f"repeats        : {args.repeats}", flush=True)
     print(f"output_dir     : {args.output_dir}", flush=True)
@@ -752,11 +756,15 @@ def _print_progress_header(args: argparse.Namespace, json_report: Path, markdown
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    _validate_run_id(args.run_id)
     args.output_dir = args.output_dir.expanduser()
-    json_report = (args.json_report or (args.output_dir / "baseline.json")).expanduser()
-    markdown_report = (args.markdown_report or (args.output_dir / "baseline.md")).expanduser()
+    json_name = f"baseline_{args.run_id}.json" if args.run_id else "baseline.json"
+    markdown_name = f"baseline_{args.run_id}.md" if args.run_id else "baseline.md"
+    json_report = (args.json_report or (args.output_dir / json_name)).expanduser()
+    markdown_report = (args.markdown_report or (args.output_dir / markdown_name)).expanduser()
+    reference_name = f"reference_16k_{args.run_id}.wav" if args.run_id else "reference_16k.wav"
     reference_wav = _make_reference_wav(
-        args.reference_wav.expanduser() if args.reference_wav else args.output_dir / "reference_16k.wav"
+        args.reference_wav.expanduser() if args.reference_wav else args.output_dir / reference_name
     )
     cases = _selected_cases(args, reference_wav)
     _print_progress_header(args, json_report, markdown_report)
@@ -800,6 +808,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def _validate_run_id(run_id: str | None) -> None:
+    if run_id is None:
+        return
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+        raise ValueError("--run-id may contain only letters, digits, dot, underscore, and dash")
+
+
 def _parser() -> argparse.ArgumentParser:
     _, _, _, _, graph_choices, execution_choices, log_choices = _runtime_imports()
     parser = argparse.ArgumentParser(
@@ -807,11 +822,16 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/perf_baseline"), help="Output directory.")
-    parser.add_argument("--json-report", type=Path, help="JSON report path. Defaults to <output-dir>/baseline.json.")
+    parser.add_argument("--run-id", help="Optional file-name prefix for concurrent baseline runs.")
+    parser.add_argument(
+        "--json-report",
+        type=Path,
+        help="JSON report path. Defaults to <output-dir>/baseline.json or baseline_<run-id>.json.",
+    )
     parser.add_argument(
         "--markdown-report",
         type=Path,
-        help="Markdown report path. Defaults to <output-dir>/baseline.md.",
+        help="Markdown report path. Defaults to <output-dir>/baseline.md or baseline_<run-id>.md.",
     )
     parser.add_argument(
         "--variants",

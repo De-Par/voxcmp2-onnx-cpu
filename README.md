@@ -20,6 +20,7 @@ This repository keeps VoxCPM2 neural work in separate ONNX graphs and keeps host
 - [🗂️ Repository Layout](#🗂️-repository-layout)
 - [🚀 From Fresh Clone To Exported Models](#🚀-from-fresh-clone-to-exported-models)
 - [🔊 Synthesize WAV](#🔊-synthesize-wav)
+- [🧩 Integration API](#🧩-integration-api)
 - [📊 Benchmark And Profile](#📊-benchmark-and-profile)
 - [🧪 Development Checks](#🧪-development-checks)
 - [📖 Documentation](#📖-documentation)
@@ -80,6 +81,7 @@ The full contract is in [docs/architecture.md](docs/architecture.md)
 │   ├── bench/         # quick official/API vs ONNX benchmark
 │   ├── parity/        # official generate-path tracing
 │   └── contracts/     # typed module-boundary schemas
+├── app/               # portable demo API wrapper for user applications
 ├── tools/
 │   ├── bench/         # production baseline and ORT session sweep runners
 │   └── profile/       # ORT profiling and Cast-summary tools
@@ -110,7 +112,7 @@ flowchart LR
     A --> B --> C --> D --> E
 
     style A fill:#3776AB,stroke:#000000,stroke-width:2px,color:#ffffff
-    style B fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
+    style B fill:#10B981,stroke:#000000,stroke-width:2px,color:#ffffff
     style C fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
     style D fill:#EC4899,stroke:#000000,stroke-width:2px,color:#ffffff
     style E fill:#DC2626,stroke:#000000,stroke-width:2px,color:#ffffff
@@ -367,17 +369,55 @@ python -B src/cli/synthesize.py \
 ```
 
 
+## 🧩 Integration API
+
+Use `app` when you want a minimal Python API that can be copied into another
+project without carrying benchmark/export tooling with it:
+
+```python
+from app import VoxCPM2Onnx, VoxCPM2OnnxConfig
+
+tts = VoxCPM2Onnx(VoxCPM2OnnxConfig(precision="bf16"))
+tts.validate()
+result = tts.synthesize(
+    "Hello from VoxCPM2.",
+    mode="text_only",
+    output_wav="artifacts/samples/app_text_only.wav",
+)
+print(result.metadata.decode_steps, result.metadata.stop_reason)
+```
+
+Demo CLI:
+
+```bash
+python -B app/demo.py \
+  --precision bf16 \
+  --text "Hello from VoxCPM2." \
+  --mode text_only \
+  --output artifacts/samples/app_demo.wav
+```
+
+The API supports `text_only`, `voice_design`, `controllable_clone`, and
+`ultimate_clone` through the same production runtime path. See
+[docs/api.md](docs/api.md)
+
+
 ## 📊 Benchmark And Profile
 
-Quick comparison:
+Quick single-variant benchmark. This command loads one model, runs multiple
+synthesis iterations, and reports mean/p50/p90/p95/p99:
 
 ```bash
 python -B src/bench/compare_pipelines.py \
+  --variant onnx_bf16 \
   --text "Hello from VoxCPM2." \
   --output-dir artifacts/bench \
   --report-json artifacts/bench/report.json \
-  --variants orig onnx_fp32 onnx_bf16
+  --iterations 3
 ```
+
+The quick bench intentionally rejects multi-variant runs. Run `orig`,
+`onnx_fp32`, and `onnx_bf16` as separate commands when collecting numbers.
 
 ORT session sweep for the shared FP32/BF16 production runtime:
 
@@ -414,6 +454,22 @@ python -B tools/profile/run_profiled_bench.py \
   --top-n 20
 ```
 
+Decode-chunk IO binding probe:
+
+```bash
+python -B tools/profile/probe_io_binding.py \
+  --precision fp32 \
+  --run-id fp32_iobinding \
+  --warmup 1 \
+  --repeats 3
+
+python -B tools/profile/probe_io_binding.py \
+  --precision bf16 \
+  --run-id bf16_iobinding \
+  --warmup 1 \
+  --repeats 3
+```
+
 Cast and dtype cleanup summary:
 
 ```bash
@@ -440,7 +496,7 @@ These checks work on a clean checkout before model export:
 ```bash
 ruff format .
 ruff check .
-python -B -m compileall -q src tests tools
+python -B -m compileall -q app src tests tools
 python -B -m pytest
 ```
 
@@ -449,7 +505,7 @@ The full pytest suite skips model-dependent smoke/parity checks when ONNX artifa
 Check runtime stays free of PyTorch:
 
 ```bash
-rg -n "\btorch\b|import torch|from torch|soundfile|librosa|transformers" src/runtime src/cli tests/smoke
+rg -n "\btorch\b|import torch|from torch|soundfile|librosa|transformers" app src/runtime src/cli tests/smoke
 ```
 
 
@@ -457,5 +513,6 @@ rg -n "\btorch\b|import torch|from torch|soundfile|librosa|transformers" src/run
 
 - [docs/architecture.md](docs/architecture.md): feature matrix, traced generate path, module boundaries, runtime contract, fixed cache, platform and dependency rules.
 - [docs/exporting.md](docs/exporting.md): export contract, artifact layout, module blockers, checker commands, parity commands.
+- [docs/api.md](docs/api.md): embeddable Python API and demo CLI for application integration.
 - [docs/precision.md](docs/precision.md): FP32/BF16 policy, BF16 compute regions, dtype cleanup, legacy storage-only BF16 experiment.
 - [docs/benchmarking.md](docs/benchmarking.md): benchmark matrix, ORT tuning, profiling, hotspot interpretation.

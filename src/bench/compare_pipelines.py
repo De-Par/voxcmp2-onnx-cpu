@@ -13,11 +13,12 @@ import argparse
 import contextlib
 import io
 import json
+import re
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from scipy.io import wavfile
@@ -68,11 +69,12 @@ def _runtime_classes():
 @dataclass(frozen=True)
 class BenchResult:
     variant: Variant
+    iteration: int
     ok: bool
     output_wav: str | None
     load_seconds: float | None
     synth_seconds: float | None
-    total_seconds: float
+    wall_seconds: float
     sample_rate: int | None
     samples: int | None
     duration_seconds: float | None
@@ -85,11 +87,12 @@ class BenchResult:
     def as_json(self) -> dict[str, object]:
         return {
             "variant": self.variant,
+            "iteration": self.iteration,
             "ok": self.ok,
             "output_wav": self.output_wav,
             "load_seconds": self.load_seconds,
             "synth_seconds": self.synth_seconds,
-            "total_seconds": self.total_seconds,
+            "wall_seconds": self.wall_seconds,
             "sample_rate": self.sample_rate,
             "samples": self.samples,
             "duration_seconds": self.duration_seconds,
@@ -99,6 +102,14 @@ class BenchResult:
             "stop_reason": self.stop_reason,
             "error": self.error,
         }
+
+
+@dataclass(frozen=True)
+class LoadedVariant:
+    variant: Variant
+    model: Any
+    load_seconds: float
+    sample_rate: int | None = None
 
 
 def _install_upstream_import_path() -> None:
@@ -187,9 +198,8 @@ def _preload_onnx_sessions(pipeline, mode: str) -> None:
         _ = pipeline.sessions.audio_encoder
 
 
-def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> BenchResult:
+def _load_onnx(args: argparse.Namespace, variant: Variant) -> LoadedVariant:
     VoxCPM2OnnxPipeline, _, _, _, _, _ = _runtime_classes()
-    total_start = time.perf_counter()
     load_start = time.perf_counter()
     pipeline = VoxCPM2OnnxPipeline.from_default_artifacts(
         model_path=args.model_path,
@@ -211,9 +221,18 @@ def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> B
     pipeline.validate()
     if args.onnx_preload_sessions:
         _preload_onnx_sessions(pipeline, args.mode)
-    load_seconds = time.perf_counter() - load_start
+    return LoadedVariant(variant=variant, model=pipeline, load_seconds=round(time.perf_counter() - load_start, 6))
 
+
+def _run_onnx_loaded(
+    args: argparse.Namespace,
+    loaded: LoadedVariant,
+    output_wav: Path,
+    *,
+    iteration: int,
+) -> BenchResult:
     synth_start = time.perf_counter()
+    pipeline = loaded.model
     result = pipeline.synthesize_with_metadata(
         args.text,
         mode=args.mode,
@@ -225,7 +244,7 @@ def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> B
         min_steps=args.min_steps,
         cfg_value=args.cfg_value,
         seed=args.seed,
-        progress_callback=_make_decode_progress(args, variant),
+        progress_callback=_make_decode_progress(args, loaded.variant),
     )
     synth_seconds = time.perf_counter() - synth_start
     waveform = result.waveform
@@ -234,12 +253,13 @@ def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> B
     samples = int(waveform.shape[0])
     peak, rms = _audio_stats(waveform)
     return BenchResult(
-        variant=variant,
+        variant=loaded.variant,
+        iteration=iteration,
         ok=True,
         output_wav=str(output_wav),
-        load_seconds=round(load_seconds, 6),
+        load_seconds=loaded.load_seconds,
         synth_seconds=round(synth_seconds, 6),
-        total_seconds=round(time.perf_counter() - total_start, 6),
+        wall_seconds=round(synth_seconds, 6),
         sample_rate=pipeline.config.decode_sample_rate,
         samples=samples,
         duration_seconds=_duration_seconds(samples, pipeline.config.decode_sample_rate),
@@ -250,19 +270,11 @@ def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> B
     )
 
 
-def _run_orig(args: argparse.Namespace, output_wav: Path) -> BenchResult:
-    total_start = time.perf_counter()
+def _load_orig(args: argparse.Namespace) -> LoadedVariant:
     load_start = time.perf_counter()
     _install_upstream_import_path()
 
     from voxcpm import VoxCPM
-
-    # Official VoxCPM2 samples diffusion noise with torch.randn inside the model.
-    # Seeding here makes benchmark repeats stable and narrows one source of
-    # mismatch against the ONNX host-supplied NumPy diffusion noise path.
-    import random
-
-    import torch
 
     model = VoxCPM.from_pretrained(
         args.model_path,
@@ -272,13 +284,29 @@ def _run_orig(args: argparse.Namespace, output_wav: Path) -> BenchResult:
         device=args.orig_device,
     )
     sample_rate = int(getattr(model.tts_model, "sample_rate", 48000))
-    load_seconds = time.perf_counter() - load_start
+    return LoadedVariant(
+        variant="orig",
+        model=model,
+        load_seconds=round(time.perf_counter() - load_start, 6),
+        sample_rate=sample_rate,
+    )
+
+
+def _run_orig_loaded(
+    args: argparse.Namespace, loaded: LoadedVariant, output_wav: Path, *, iteration: int
+) -> BenchResult:
+    # Official VoxCPM2 samples diffusion noise with torch.randn inside the model.
+    # Seeding here makes benchmark repeats stable and narrows one source of
+    # mismatch against the ONNX host-supplied NumPy diffusion noise path.
+    import random
+
+    import torch
 
     synth_start = time.perf_counter()
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    waveform = model.generate(
+    waveform = loaded.model.generate(
         text=_mode_text(args),
         prompt_wav_path=str(args.prompt_wav) if args.prompt_wav else None,
         prompt_text=args.prompt_text,
@@ -294,16 +322,18 @@ def _run_orig(args: argparse.Namespace, output_wav: Path) -> BenchResult:
         retry_badcase_ratio_threshold=args.orig_retry_badcase_ratio_threshold,
     )
     synth_seconds = time.perf_counter() - synth_start
+    sample_rate = int(loaded.sample_rate or 48000)
     waveform = _write_wav(output_wav, waveform, sample_rate)
     samples = int(waveform.shape[0])
     peak, rms = _audio_stats(waveform)
     return BenchResult(
         variant="orig",
+        iteration=iteration,
         ok=True,
         output_wav=str(output_wav),
-        load_seconds=round(load_seconds, 6),
+        load_seconds=loaded.load_seconds,
         synth_seconds=round(synth_seconds, 6),
-        total_seconds=round(time.perf_counter() - total_start, 6),
+        wall_seconds=round(synth_seconds, 6),
         sample_rate=sample_rate,
         samples=samples,
         duration_seconds=_duration_seconds(samples, sample_rate),
@@ -312,36 +342,59 @@ def _run_orig(args: argparse.Namespace, output_wav: Path) -> BenchResult:
     )
 
 
-def _call_variant(args: argparse.Namespace, variant: Variant, output_wav: Path) -> BenchResult:
+def _load_variant(args: argparse.Namespace, variant: Variant) -> LoadedVariant:
     if variant == "orig":
-        return _run_orig(args, output_wav)
-    return _run_onnx(args, variant, output_wav)
+        return _load_orig(args)
+    return _load_onnx(args, variant)
 
 
-def _run_variant(args: argparse.Namespace, variant: Variant) -> BenchResult:
-    output_wav = args.output_dir.expanduser() / f"{variant}_{args.mode}.wav"
+def _call_loaded_variant(
+    args: argparse.Namespace,
+    loaded: LoadedVariant,
+    output_wav: Path,
+    *,
+    iteration: int,
+) -> BenchResult:
+    if loaded.variant == "orig":
+        return _run_orig_loaded(args, loaded, output_wav, iteration=iteration)
+    return _run_onnx_loaded(args, loaded, output_wav, iteration=iteration)
+
+
+def _run_id_prefix(args: argparse.Namespace) -> str:
+    if not args.run_id:
+        return ""
+    return f"{args.run_id}_"
+
+
+def _iteration_output_wav(args: argparse.Namespace, variant: Variant, iteration: int) -> Path:
+    return args.output_dir.expanduser() / f"{_run_id_prefix(args)}{variant}_{args.mode}_i{iteration:02d}.wav"
+
+
+def _run_iteration(args: argparse.Namespace, loaded: LoadedVariant, iteration: int) -> BenchResult:
+    output_wav = _iteration_output_wav(args, loaded.variant, iteration)
     stdout = io.StringIO()
     stderr = io.StringIO()
     try:
-        if variant == "orig" and not args.show_variant_output:
+        if loaded.variant == "orig" and not args.show_variant_output:
             # Official VoxCPM2 uses tqdm/logging internally. Capturing it keeps
             # the benchmark output stable and avoids half-finished progress bars
             # when the model stops generation early.
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                return _call_variant(args, variant, output_wav)
-        return _call_variant(args, variant, output_wav)
+                return _call_loaded_variant(args, loaded, output_wav, iteration=iteration)
+        return _call_loaded_variant(args, loaded, output_wav, iteration=iteration)
     except Exception as exc:  # noqa: BLE001 - a benchmark should report failed variants and continue.
         captured_tail = _variant_output_tail(stdout, stderr)
         error = f"{type(exc).__name__}: {exc}"
         if captured_tail:
             error = f"{error}\nCaptured output tail:\n{captured_tail}"
         return BenchResult(
-            variant=variant,
+            variant=loaded.variant,
+            iteration=iteration,
             ok=False,
             output_wav=str(output_wav),
-            load_seconds=None,
+            load_seconds=loaded.load_seconds,
             synth_seconds=None,
-            total_seconds=0.0,
+            wall_seconds=0.0,
             sample_rate=None,
             samples=None,
             duration_seconds=None,
@@ -367,11 +420,42 @@ def _make_decode_progress(args: argparse.Namespace, variant: Variant):
 
 
 def _report_path(args: argparse.Namespace) -> Path:
-    return (args.report_json or (args.output_dir / "report.json")).expanduser()
+    default_name = f"report_{args.run_id}.json" if args.run_id else "report.json"
+    return (args.report_json or (args.output_dir / default_name)).expanduser()
+
+
+def _selected_variant(args: argparse.Namespace) -> Variant:
+    if args.variants is not None:
+        if len(args.variants) != 1:
+            raise ValueError("quick bench runs exactly one variant; use --variant or pass a single --variants value")
+        if args.variant is not None:
+            raise ValueError("use either --variant or legacy --variants, not both")
+        return args.variants[0]
+    if args.variant is None:
+        raise ValueError("--variant is required")
+    return args.variant
+
+
+def _measure_data_load(args: argparse.Namespace) -> float:
+    """Measure input data availability/read cost outside model load and synth.
+
+    This is intentionally a benchmark-side probe. The selected runtime/API still
+    performs its own input handling during synthesis, so this metric should be
+    read as external input data load cost, not as a hidden model stage.
+    """
+
+    start = time.perf_counter()
+    if args.reference_wav:
+        wavfile.read(str(args.reference_wav))
+    if args.prompt_wav and args.prompt_wav != args.reference_wav:
+        wavfile.read(str(args.prompt_wav))
+    _ = _mode_text(args)
+    return round(time.perf_counter() - start, 6)
 
 
 def _print_header(args: argparse.Namespace) -> None:
     _, VoxCPM2RuntimeConfig, _, _, _, _ = _runtime_classes()
+    variant = _selected_variant(args)
     max_steps_text = (
         f"auto-until-stop (safety cap: {VoxCPM2RuntimeConfig().decode_safety_max_steps})"
         if args.max_steps == 0
@@ -381,7 +465,10 @@ def _print_header(args: argparse.Namespace) -> None:
     print("VoxCPM2 benchmark", flush=True)
     print("=" * 72, flush=True)
     print(f"mode          : {args.mode}", flush=True)
-    print(f"variants      : {', '.join(args.variants)}", flush=True)
+    if args.run_id:
+        print(f"run_id        : {args.run_id}", flush=True)
+    print(f"variant       : {variant}", flush=True)
+    print(f"iterations    : {args.iterations}", flush=True)
     print(f"output_dir    : {args.output_dir.expanduser()}", flush=True)
     print(f"json_report   : {_report_path(args)}", flush=True)
     print(f"ONNX decode   : max_steps={max_steps_text}, min_steps={args.min_steps}", flush=True)
@@ -410,7 +497,7 @@ def _print_header(args: argparse.Namespace) -> None:
 
 def _print_result(result: BenchResult) -> None:
     status = "OK" if result.ok else "FAIL"
-    print(f"[{status}] {result.variant}", flush=True)
+    print(f"[{status}] {result.variant} iteration {result.iteration}", flush=True)
     if not result.ok:
         print(f"  error: {result.error}", flush=True)
         print(flush=True)
@@ -429,55 +516,154 @@ def _print_result(result: BenchResult) -> None:
     print(
         "  Time     : "
         f"load={result.load_seconds:.3f}s, synth={result.synth_seconds:.3f}s, "
-        f"total={result.total_seconds:.3f}s",
+        f"wall={result.wall_seconds:.3f}s",
         flush=True,
     )
     print(flush=True)
 
 
-def run(args: argparse.Namespace, *, progress: bool = False) -> list[BenchResult]:
+def run(args: argparse.Namespace, *, progress: bool = False) -> dict[str, object]:
+    _validate_run_id(args.run_id)
     _validate_mode_args(args)
+    variant = _selected_variant(args)
+    if args.iterations < 1:
+        raise ValueError("--iterations must be >= 1")
     args.output_dir.expanduser().mkdir(parents=True, exist_ok=True)
     if progress:
         _print_header(args)
+
+    data_load_seconds = _measure_data_load(args)
+    if progress:
+        print(f"data load    : {data_load_seconds:.6f}s", flush=True)
+        print(f"loading      : {variant}", flush=True)
+    loaded = _load_variant(args, variant)
+    if progress:
+        print(f"model load   : {loaded.load_seconds:.6f}s", flush=True)
+        print(flush=True)
+
     results = []
-    for index, variant in enumerate(args.variants, start=1):
+    for iteration in range(1, args.iterations + 1):
         if progress:
-            print(f"[{index}/{len(args.variants)}] running {variant}", flush=True)
-        result = _run_variant(args, variant)
+            print(f"[{iteration}/{args.iterations}] running {variant}", flush=True)
+        result = _run_iteration(args, loaded, iteration)
         results.append(result)
         if progress:
             _print_result(result)
 
+    report = _make_report(args, variant, data_load_seconds, loaded.load_seconds, results)
     report_path = _report_path(args)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(
-        json.dumps([result.as_json() for result in results], indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if progress:
-        _print_summary(results)
+        _print_summary(report)
         print(f"json saved: {report_path}", flush=True)
-    return results
+    return report
 
 
-def _print_summary(results: list[BenchResult]) -> None:
+def _validate_run_id(run_id: str | None) -> None:
+    if run_id is None:
+        return
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+        raise ValueError("--run-id may contain only letters, digits, dot, underscore, and dash")
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    return round(float(np.percentile(np.array(values, dtype=np.float64), percentile)), 6)
+
+
+def _stats(values: list[float]) -> dict[str, float | None]:
+    clean = [float(value) for value in values if value is not None]
+    if not clean:
+        return {"mean": None, "min": None, "max": None, "p50": None, "p90": None, "p95": None, "p99": None}
+    return {
+        "mean": round(float(np.mean(clean)), 6),
+        "min": round(min(clean), 6),
+        "max": round(max(clean), 6),
+        "p50": _percentile(clean, 50),
+        "p90": _percentile(clean, 90),
+        "p95": _percentile(clean, 95),
+        "p99": _percentile(clean, 99),
+    }
+
+
+def _make_report(
+    args: argparse.Namespace,
+    variant: Variant,
+    data_load_seconds: float,
+    model_load_seconds: float,
+    results: list[BenchResult],
+) -> dict[str, object]:
+    ok_results = [result for result in results if result.ok]
+    synth_values = [float(result.synth_seconds) for result in ok_results if result.synth_seconds is not None]
+    wall_values = [float(result.wall_seconds) for result in ok_results]
+    duration_values = [float(result.duration_seconds) for result in ok_results if result.duration_seconds is not None]
+    sample_values = [float(result.samples) for result in ok_results if result.samples is not None]
+    decode_values = [float(result.decode_steps) for result in ok_results if result.decode_steps is not None]
+    peak_values = [float(result.peak) for result in ok_results if result.peak is not None]
+    rms_values = [float(result.rms) for result in ok_results if result.rms is not None]
+    return {
+        "schema_version": 2,
+        "variant": variant,
+        "mode": args.mode,
+        "iterations": args.iterations,
+        "seed": args.seed,
+        "data_load_seconds": data_load_seconds,
+        "model_load_seconds": model_load_seconds,
+        "config": {
+            "max_steps": args.max_steps,
+            "min_steps": args.min_steps,
+            "cfg_value": args.cfg_value,
+            "onnx_graph_optimization": args.onnx_graph_optimization,
+            "onnx_execution_mode": args.onnx_execution_mode,
+            "onnx_log_severity": args.onnx_log_severity,
+            "onnx_preload_sessions": args.onnx_preload_sessions,
+            "onnx_intra_op_threads": args.onnx_intra_op_threads,
+            "onnx_inter_op_threads": args.onnx_inter_op_threads,
+            "onnx_enable_mem_pattern": args.onnx_enable_mem_pattern,
+            "onnx_enable_cpu_mem_arena": args.onnx_enable_cpu_mem_arena,
+            "onnx_enable_mem_reuse": args.onnx_enable_mem_reuse,
+        },
+        "aggregate": {
+            "ok_iterations": len(ok_results),
+            "failed_iterations": len(results) - len(ok_results),
+            "synth_seconds": _stats(synth_values),
+            "wall_seconds": _stats(wall_values),
+            "output_duration_seconds": _stats(duration_values),
+            "samples": _stats(sample_values),
+            "decode_steps": _stats(decode_values),
+            "peak": _stats(peak_values),
+            "rms": _stats(rms_values),
+        },
+        "runs": [result.as_json() for result in results],
+    }
+
+
+def _print_summary(report: dict[str, object]) -> None:
     print("Summary", flush=True)
     print("-" * 72, flush=True)
-    for result in results:
-        if not result.ok:
-            print(f"{result.variant:10} FAIL", flush=True)
-            continue
-        decode = f"{result.decode_steps} steps, {result.stop_reason}" if result.decode_steps is not None else "-"
-        print(
-            f"{result.variant:10} "
-            f"{result.duration_seconds:7.3f}s  "
-            f"peak={result.peak:.6f}  "
-            f"synth={result.synth_seconds:.3f}s  "
-            f"decode={decode}  "
-            f"wav={result.output_wav}",
-            flush=True,
-        )
+    aggregate = report["aggregate"]
+    synth = aggregate["synth_seconds"]
+    wall = aggregate["wall_seconds"]
+    duration = aggregate["output_duration_seconds"]
+    decode = aggregate["decode_steps"]
+    print(f"variant       : {report['variant']}", flush=True)
+    print(f"data load     : {report['data_load_seconds']:.6f}s", flush=True)
+    print(f"model load    : {report['model_load_seconds']:.6f}s", flush=True)
+    print(f"iterations    : ok={aggregate['ok_iterations']} failed={aggregate['failed_iterations']}", flush=True)
+    print(
+        "synth seconds : "
+        f"mean={synth['mean']} p50={synth['p50']} p90={synth['p90']} "
+        f"p95={synth['p95']} p99={synth['p99']}",
+        flush=True,
+    )
+    print(
+        f"wall seconds  : mean={wall['mean']} p50={wall['p50']} p90={wall['p90']} p95={wall['p95']} p99={wall['p99']}",
+        flush=True,
+    )
+    print(f"audio duration: mean={duration['mean']} p50={duration['p50']} p90={duration['p90']}", flush=True)
+    print(f"decode steps  : mean={decode['mean']} p50={decode['p50']} p90={decode['p90']}", flush=True)
     print(flush=True)
 
 
@@ -489,11 +675,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--text", required=True, help="Target text to synthesize.")
     parser.add_argument(
+        "--variant",
+        choices=["orig", "onnx_fp32", "onnx_bf16"],
+        help="Single pipeline variant to benchmark. Multi-variant quick bench runs are intentionally disallowed.",
+    )
+    parser.add_argument(
         "--variants",
         nargs="+",
         choices=["orig", "onnx_fp32", "onnx_bf16"],
-        default=["orig", "onnx_fp32", "onnx_bf16"],
-        help="Pipeline variants to benchmark in order.",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=3,
+        help="Number of synthesis iterations to run after one model load. Aggregates report mean/p50/p90/p95/p99.",
     )
     parser.add_argument(
         "--mode",
@@ -505,7 +701,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report-json",
         type=Path,
-        help="JSON summary path. Defaults to <output-dir>/report.json.",
+        help="JSON summary path. Defaults to <output-dir>/report.json or report_<run-id>.json.",
+    )
+    parser.add_argument(
+        "--run-id",
+        help=(
+            "Optional file-name prefix for concurrent benchmark runs. When set, default WAV/report names include it."
+        ),
     )
     parser.add_argument(
         "--model-path", default="openbmb/VoxCPM2", help="Local VoxCPM2 model directory or Hugging Face id."
@@ -639,7 +841,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    run(_parser().parse_args(), progress=True)
+    try:
+        run(_parser().parse_args(), progress=True)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     return 0
 
 

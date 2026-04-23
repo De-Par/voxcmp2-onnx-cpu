@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -115,8 +116,14 @@ def _preload_all_sessions(pipeline: object) -> None:
     _ = pipeline.sessions.audio_decoder
 
 
+def _run_id_prefix(args: argparse.Namespace) -> str:
+    if not args.run_id:
+        return ""
+    return f"{args.run_id}_"
+
+
 def _run_case(args: argparse.Namespace, pipeline: object, case: object, reference_wav: Path) -> dict[str, object]:
-    output_wav = args.output_dir / "wavs" / f"onnx_profile_{case.case_id}.wav"
+    output_wav = args.output_dir / "wavs" / f"onnx_profile_{_run_id_prefix(args)}{case.case_id}.wav"
     start = time.perf_counter()
     result = pipeline.synthesize_with_metadata(
         case.text,
@@ -146,13 +153,16 @@ def _run_case(args: argparse.Namespace, pipeline: object, case: object, referenc
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
+    _validate_run_id(args.run_id)
     args.output_dir = args.output_dir.expanduser()
-    profile_dir = args.profile_dir.expanduser() if args.profile_dir else args.output_dir / "profiles"
+    default_profile_dir = args.output_dir / (f"profiles_{args.run_id}" if args.run_id else "profiles")
+    profile_dir = args.profile_dir.expanduser() if args.profile_dir else default_profile_dir
     profile_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     _, make_reference_wav = _bench_helpers()
+    default_reference = f"reference_16k_{args.run_id}.wav" if args.run_id else "reference_16k.wav"
     reference_wav = make_reference_wav(
-        args.reference_wav.expanduser() if args.reference_wav else args.output_dir / "reference_16k.wav"
+        args.reference_wav.expanduser() if args.reference_wav else args.output_dir / default_reference
     )
     selected_cases = [_cases()[case_id] for case_id in args.cases]
 
@@ -160,6 +170,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     print("VoxCPM2 ORT profiled bench", flush=True)
     print("=" * 72, flush=True)
     print(f"cases      : {', '.join(args.cases)}", flush=True)
+    if args.run_id:
+        print(f"run_id     : {args.run_id}", flush=True)
     print(f"output_dir : {args.output_dir}", flush=True)
     print(f"profile_dir: {profile_dir}", flush=True)
     print(
@@ -205,14 +217,23 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "profile_paths": {name: str(path) for name, path in profile_paths.items()},
         "hotspots": hotspot_report,
     }
-    json_report = (args.json_report or (args.output_dir / "profiled_bench.json")).expanduser()
-    markdown_report = (args.markdown_report or (args.output_dir / "hotspots.md")).expanduser()
+    json_name = f"profiled_bench_{args.run_id}.json" if args.run_id else "profiled_bench.json"
+    markdown_name = f"hotspots_{args.run_id}.md" if args.run_id else "hotspots.md"
+    json_report = (args.json_report or (args.output_dir / json_name)).expanduser()
+    markdown_report = (args.markdown_report or (args.output_dir / markdown_name)).expanduser()
     write_json(json_report, result)
     write_markdown(markdown_report, hotspot_report, top_n=args.top_n)
     print(flush=True)
     print(f"json saved    : {json_report}", flush=True)
     print(f"markdown saved: {markdown_report}", flush=True)
     return result
+
+
+def _validate_run_id(run_id: str | None) -> None:
+    if run_id is None:
+        return
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+        raise ValueError("--run-id may contain only letters, digits, dot, underscore, and dash")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -222,12 +243,21 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/profile"), help="Output directory.")
-    parser.add_argument("--profile-dir", type=Path, help="ORT profile directory. Defaults to <output-dir>/profiles.")
+    parser.add_argument("--run-id", help="Optional file-name suffix/prefix for concurrent profiled benchmark runs.")
     parser.add_argument(
-        "--json-report", type=Path, help="JSON report path. Defaults to <output-dir>/profiled_bench.json."
+        "--profile-dir",
+        type=Path,
+        help="ORT profile directory. Defaults to <output-dir>/profiles or profiles_<run-id>.",
     )
     parser.add_argument(
-        "--markdown-report", type=Path, help="Markdown report path. Defaults to <output-dir>/hotspots.md."
+        "--json-report",
+        type=Path,
+        help="JSON report path. Defaults to <output-dir>/profiled_bench.json or profiled_bench_<run-id>.json.",
+    )
+    parser.add_argument(
+        "--markdown-report",
+        type=Path,
+        help="Markdown report path. Defaults to <output-dir>/hotspots.md or hotspots_<run-id>.md.",
     )
     parser.add_argument(
         "--cases", nargs="+", choices=CASE_IDS, default=["controllable_clone_short"], help="Cases to run."
