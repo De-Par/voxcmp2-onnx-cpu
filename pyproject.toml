@@ -54,6 +54,7 @@ dev = [
 voxcpm2-bench = "src.bench.compare_pipelines:main"
 voxcpm2-bf16-feasibility = "src.experiments.bf16_feasibility:main"
 voxcpm2-export = "src.export.export_all:main"
+voxcpm2-patch-bf16-ort-cpu = "src.export.patch_bf16_ort_cpu:main"
 voxcpm2-synthesize = "src.cli.synthesize:main"
 voxcpm2-trace-generate = "src.parity.trace_generate:main"
 

@@ -34,7 +34,7 @@ This repository keeps VoxCPM2 neural work in separate ONNX graphs and keeps host
 | Platforms | macOS arm64, Linux x86_64 / arm64, Windows x86_64 / arm64 |
 | V1 modes | text-to-speech, voice design, controllable clone, ultimate clone |
 | Deferred | streaming |
-| Precision targets | production FP32 and production BF16 |
+| Precision targets | production FP32 correctness anchor and production BF16 performance target |
 | Non-goals | GPU/CoreML/CUDA/DirectML/MPS, quantization, monolithic ONNX graph |
 
 
@@ -199,6 +199,12 @@ Export production BF16:
 python -B src/export/export_all.py --precision bf16
 ```
 
+BF16 export applies an ORT CPU compatibility pass automatically. The pass keeps the same public graph contract and inserts explicit FP32 islands only for BF16 op types that stock ONNX Runtime CPU cannot load or run. If you already have stale BF16 artifacts from an older export, patch them in place instead of re-exporting:
+
+```bash
+python -B src/export/patch_bf16_ort_cpu.py --root models/onnx
+```
+
 Production exports use the shared `production` shape profile for both precision families:
 
 | bound | default |
@@ -271,6 +277,15 @@ python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
 # decode_chunk
 python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx --chunk-size 4 --cache-seq 16 --max-cache-seq 64
+```
+
+Use the same commands with `fp32` replaced by `bf16` to validate BF16 artifacts:
+
+```bash
+python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx
+python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx
+python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/bf16/prefill/voxcpm2_prefill.onnx --mode plain_tts
+python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/bf16/decode_chunk/voxcpm2_decode_chunk.onnx --chunk-size 4 --cache-seq 16 --max-cache-seq 64
 ```
 
 Parity against PyTorch export wrappers:
@@ -387,6 +402,8 @@ python -B tools/profile/summarize_dtype_casts.py \
 ```
 
 Benchmark details are in [docs/benchmarking.md](docs/benchmarking.md)
+
+BF16 is the ONNX performance target because official VoxCPM2 also runs the model in bfloat16. Current stock ONNX Runtime CPU lacks BF16 kernels for several hot operators in the exported graphs, so BF16 artifacts use documented compatibility islands until those kernels or a custom provider are available. Treat benchmark output as the source of truth for whether a local ORT build beats the official API.
 
 The default production ORT session policy is shared by FP32 and BF16:
 `graph_optimization=all`, `execution=sequential`, `intra_op_threads=8`, `inter_op_threads=1`,

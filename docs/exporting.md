@@ -91,6 +91,14 @@ Export production BF16:
 python -B src/export/export_all.py --precision bf16
 ```
 
+BF16 export runs the stock ORT CPU compatibility pass from `src/export/common.py` after `torch.onnx.export`. This pass is part of the production export path: it preserves the public contract and inserts explicit FP32 islands only where ORT CPU cannot load or run BF16 operators.
+
+Patch already exported BF16 artifacts without re-exporting:
+
+```bash
+python -B src/export/patch_bf16_ort_cpu.py --root models/onnx
+```
+
 Export both precision families with larger production bounds:
 
 ```bash
@@ -177,6 +185,19 @@ The graph takes fixed-capacity cache tensors, valid lengths, and host-supplied d
 
 `VoxCPM2DecodeStep` remains available as an internal one-step export/parity utility. Production runtime and `export_all.py` use `VoxCPM2DecodeChunk`.
 
+### BF16 ORT CPU Compatibility
+
+ONNX checker alone is not enough for BF16 production signoff. Current stock ONNX Runtime CPU rejects checker-valid BF16 graphs for several operators. The compatibility pass currently covers these observed blockers:
+
+| module | observed ORT CPU BF16 blocker |
+|---|---|
+| `AudioVAEEncoder` | `Pad`, `Conv`, `Sin`, selected elementwise ops |
+| `AudioVAEDecoder` | `Pad`, `Conv`, `ConvTranspose`, `Sin`, selected elementwise ops |
+| `VoxCPM2Prefill` | `MatMul`, `Gemm`, `Expand`, `Round`, `Sigmoid`, selected elementwise ops |
+| `VoxCPM2DecodeChunk` | `MatMul`, `Gemm`, `Where`, `IsNaN`, `Expand`, `Cos`, `Sin`, `Round`, selected elementwise ops |
+
+These are runtime-kernel compatibility islands, not model-math changes. If ORT CPU support improves, remove the corresponding op from the pass, re-export BF16, and rerun validation, parity, and benchmark checks.
+
 ## 🛠️ Runtime Checkers
 
 After export, run path-based ONNX checker and one ORT CPU invocation per module:
@@ -187,6 +208,8 @@ python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
 python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx --chunk-size 4 --cache-seq 16 --max-cache-seq 64
 ```
+
+Replace `fp32` with `bf16` for the BF16 production artifacts. All four BF16 modules must create a `CPUExecutionProvider` session and complete the compact synthetic run.
 
 Each checker logs input names, output names, dtype, dynamic/static dims, CPU providers, and compact output statistics. Large models must use path-based `onnx.checker.check_model(str(path))`.
 
@@ -233,6 +256,7 @@ python -B -m pytest tests/smoke/test_cpu_only_runtime.py
 - All four modules export for FP32 and BF16.
 - ONNX checker passes for every graph.
 - ONNX Runtime CPU creates every session.
+- BF16 artifacts pass ORT CPU load/run after compatibility islands are applied.
 - Public contracts match `src/export/common.py`.
 - FP32 parity exists for every module.
 - BF16 parity exists with explicit tolerances before production signoff.

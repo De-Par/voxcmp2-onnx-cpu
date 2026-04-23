@@ -22,6 +22,7 @@ try:
         configure_module_precision,
         ensure_output_dir,
         export_onnx_graph,
+        finalize_exported_graph,
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
@@ -39,6 +40,7 @@ except ImportError:
         configure_module_precision,
         ensure_output_dir,
         export_onnx_graph,
+        finalize_exported_graph,
         get_precision_profile,
         print_export_plan,
         resolve_output_path,
@@ -203,6 +205,7 @@ def export_audio_vae_decoder(args: argparse.Namespace) -> None:
         opset=args.opset,
         dynamic_shapes=_dynamic_shapes(shape_profile),
     )
+    finalize_exported_graph(output_path, precision)
 
     print(f"exported={output_path}")
 

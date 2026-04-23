@@ -46,8 +46,8 @@ Why this default is used now:
 
 - local voice-design benchmark with conservative ORT settings measured ONNX FP32 at roughly `478.9 s` synthesis time
 - the same workload with `graph_optimization=all`, `execution=sequential`, `intra=8`, `inter=1` measured ONNX FP32 at roughly `80.0 s`
-- BF16 storage/compute artifacts must still load successfully under ORT CPU before a BF16-specific recommendation is accepted
-- if a BF16 graph fails to load because an op lacks BF16 CPU support, the sweep records the failure and the runtime default stays common
+- BF16 artifacts must load and run under ORT CPU with the production compatibility islands before a BF16-specific recommendation is accepted
+- if a BF16 graph regresses to a load failure because an op lacks BF16 CPU support, the sweep records the failure and the runtime default stays common
 
 The benchmark CLI preloads selected ONNX sessions during the load phase by default. Use `--no-onnx-preload-sessions` only when measuring first-request latency.
 
@@ -99,6 +99,8 @@ python -B src/bench/compare_pipelines.py \
 ```
 
 The benchmark prints readable console output and writes JSON. It records WAV path, load time, synthesis time, total time, sample rate, sample count, output duration, peak, RMS, decode steps, and stop reason.
+
+BF16 should be benchmarked as a production performance target, not as an experiment. At the same time, current stock ONNX Runtime CPU forces large documented FP32 islands for missing BF16 kernels, so a BF16 artifact can be correct and still fail to beat the official API. Use the per-stage latency columns and ORT profile hotspots to decide whether the bottleneck is session overhead, prefill, decode chunk, AudioVAE, or dtype compatibility casts.
 
 ## 🎚️ ORT Session Config Sweep
 

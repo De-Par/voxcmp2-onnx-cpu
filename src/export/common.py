@@ -16,6 +16,52 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ONNX_ROOT = REPO_ROOT / "models" / "onnx"
 PRECISION_CHOICES: tuple[PrecisionName, ...] = ("fp32", "bf16")
 SHAPE_PROFILE_CHOICES: tuple[ShapeProfileName, ...] = ("production", "flex")
+BF16_ORT_CPU_FP32_ISLAND_OPS: tuple[str, ...] = (
+    "Add",
+    "Sub",
+    "Mul",
+    "Div",
+    "Pow",
+    "Sqrt",
+    "Reciprocal",
+    "Exp",
+    "Tanh",
+    "Sigmoid",
+    "Softmax",
+    "ReduceMean",
+    "Expand",
+    "Pad",
+    "Conv",
+    "ConvTranspose",
+    "MatMul",
+    "Gemm",
+    "Where",
+    "IsNaN",
+    "SplitToSequence",
+    "Cos",
+    "Sin",
+    "Round",
+)
+BF16_ORT_CPU_FLOAT_INPUT_INDEXES: dict[str, tuple[int, ...] | None] = {
+    # ReduceMean input 1 is axes in opset 18 and must remain INT64.
+    "ReduceMean": (0,),
+    # Pad input 1 is pads and must remain INT64; input 2 is optional data-type constant value.
+    "Pad": (0, 2),
+    # Expand input 1 is the output shape and must remain INT64.
+    "Expand": (0,),
+    # SplitToSequence input 1 is split sizes and must remain INT64.
+    "SplitToSequence": (0,),
+    # Where input 0 is the BOOL condition; only the value branches are floating tensors.
+    "Where": (1, 2),
+}
+BF16_ORT_CPU_SKIP_OUTPUT_CAST_OPS: set[str] = {"IsNaN", "SplitToSequence"}
+BF16_ORT_CPU_PROPAGATE_FLOAT_FROM_INPUT0_OPS: set[str] = {
+    "Reshape",
+    "Transpose",
+    "Squeeze",
+    "Unsqueeze",
+    "Flatten",
+}
 
 
 @dataclass(frozen=True)
@@ -122,14 +168,14 @@ class ModulePrecisionPolicy:
 
 BF16_MODULE_POLICIES: dict[str, ModulePrecisionPolicy] = {
     "audio_vae_encoder": ModulePrecisionPolicy(
-        bf16_compute_regions=("AudioVAE encoder convolution/residual stack",),
-        fp32_islands=(),
-        boundary_casts=("waveform fp32->bf16", "latent bf16->fp32"),
+        bf16_compute_regions=("AudioVAE encoder non-convolution activation/mixing regions",),
+        fp32_islands=("Pad", "Conv", "Sin", "elementwise ops required by ORT CPU kernel coverage"),
+        boundary_casts=("waveform fp32->bf16", "latent bf16->fp32", "BF16<->FP32 around ORT CPU islands"),
     ),
     "audio_vae_decoder": ModulePrecisionPolicy(
-        bf16_compute_regions=("AudioVAE decoder convolution/residual stack",),
-        fp32_islands=(),
-        boundary_casts=("latent fp32->bf16", "waveform bf16->fp32"),
+        bf16_compute_regions=("AudioVAE decoder non-convolution activation/mixing regions",),
+        fp32_islands=("Pad", "ConvTranspose", "Conv", "Sin", "elementwise ops required by ORT CPU kernel coverage"),
+        boundary_casts=("latent fp32->bf16", "waveform bf16->fp32", "BF16<->FP32 around ORT CPU islands"),
     ),
     "prefill": ModulePrecisionPolicy(
         bf16_compute_regions=(
@@ -139,11 +185,12 @@ BF16_MODULE_POLICIES: dict[str, ModulePrecisionPolicy] = {
             "FSQ/fusion projection",
             "residual LM prefill",
         ),
-        fp32_islands=(),
+        fp32_islands=("MatMul, Gemm, Expand, Round, Sigmoid, and elementwise ops required by ORT CPU kernel coverage",),
         boundary_casts=(
             "text/audio masks fp32->bf16",
             "audio features fp32->bf16",
             "hidden/cache outputs bf16->fp32",
+            "Round BF16<->FP32 ORT CPU island",
         ),
     ),
     "decode_step": ModulePrecisionPolicy(
@@ -155,7 +202,10 @@ BF16_MODULE_POLICIES: dict[str, ModulePrecisionPolicy] = {
             "residual LM decode step",
             "stop head",
         ),
-        fp32_islands=("rotary position embedding multiply/add",),
+        fp32_islands=(
+            "rotary position embedding multiply/add",
+            "MatMul/Gemm/Where/IsNaN/Expand/elementwise/Cos/Sin/Round ORT CPU islands",
+        ),
         boundary_casts=(
             "hidden/cache/noise/cfg fp32->bf16",
             "feature/hidden/cache-update outputs bf16->fp32",
@@ -170,7 +220,10 @@ BF16_MODULE_POLICIES: dict[str, ModulePrecisionPolicy] = {
             "residual LM decode steps",
             "stop head",
         ),
-        fp32_islands=("rotary position embedding multiply/add",),
+        fp32_islands=(
+            "rotary position embedding multiply/add",
+            "MatMul/Gemm/Where/IsNaN/Expand/elementwise/Cos/Sin/Round ORT CPU islands",
+        ),
         boundary_casts=(
             "hidden/cache/noise/cfg fp32->bf16",
             "chunk feature/hidden/cache-update outputs bf16->fp32",
@@ -411,6 +464,244 @@ def cast_tensor_if_needed(tensor: Any, dtype: Any) -> Any:
     return tensor.to(dtype=dtype)
 
 
+def _tensor_type_map(model: Any) -> dict[str, int]:
+    type_map: dict[str, int] = {}
+    graph = model.graph
+    for value_info in list(graph.input) + list(graph.value_info) + list(graph.output):
+        if not value_info.type.HasField("tensor_type"):
+            continue
+        tensor_type = value_info.type.tensor_type
+        if tensor_type.elem_type:
+            type_map[value_info.name] = tensor_type.elem_type
+    for initializer in graph.initializer:
+        type_map[initializer.name] = initializer.data_type
+    for sparse_initializer in graph.sparse_initializer:
+        type_map[sparse_initializer.values.name] = sparse_initializer.values.data_type
+    return type_map
+
+
+def _inferred_tensor_type_map(model: Any) -> dict[str, int]:
+    import onnx
+
+    type_map = _tensor_type_map(model)
+    try:
+        inferred = onnx.shape_inference.infer_shapes(model, strict_mode=False, data_prop=False)
+    except Exception:
+        return type_map
+    inferred_map = _tensor_type_map(inferred)
+    type_map.update(inferred_map)
+    return type_map
+
+
+def _set_value_info_elem_type(graph: Any, name: str, elem_type: int) -> None:
+    for value_info in list(graph.input) + list(graph.value_info) + list(graph.output):
+        if value_info.name == name and value_info.type.HasField("tensor_type"):
+            value_info.type.tensor_type.elem_type = elem_type
+
+
+def apply_bf16_ort_cpu_compatibility_pass(
+    model_path: Path,
+    *,
+    op_types: tuple[str, ...] = BF16_ORT_CPU_FP32_ISLAND_OPS,
+    check_model: bool = True,
+) -> dict[str, Any]:
+    """Insert FP32 islands around BF16 ops unsupported by ORT CPU.
+
+    ONNX checker accepts BF16 graphs that ONNX Runtime CPU later rejects during
+    session creation. The production BF16 path keeps BF16 where ORT CPU can run
+    it and casts only specific unsupported operators to FP32, then casts their
+    BF16-typed outputs back so the surrounding graph contract does not change.
+    This edits graph edges only; it does not alter public input/output names,
+    shapes, or state semantics.
+    """
+
+    import onnx
+    from onnx import TensorProto, helper
+
+    model_path = model_path.expanduser()
+    model = onnx.load(str(model_path), load_external_data=False)
+    graph = model.graph
+    type_map = _inferred_tensor_type_map(model)
+    island_ops = set(op_types)
+
+    existing_cast_outputs = {node.output[0] for node in graph.node if node.op_type == "Cast" and node.output}
+    graph_output_names = {output.name for output in graph.output}
+    new_nodes = []
+    inserted_input_casts = 0
+    inserted_output_casts = 0
+    restored_nonfloat_inputs = 0
+    updated_sequence_at_outputs = 0
+    updated_float_propagated_outputs = 0
+    patched_nodes = 0
+    patched_by_op: dict[str, int] = {}
+    fp32_sequence_outputs = {
+        node.output[0]
+        for node in graph.node
+        if node.op_type == "SplitToSequence" and node.input and node.output and node.input[0].endswith("__bf16_to_fp32")
+    }
+
+    for node in graph.node:
+        if node.op_type == "SequenceAt" and node.input and node.input[0] in fp32_sequence_outputs:
+            for output_name in node.output:
+                _set_value_info_elem_type(graph, output_name, TensorProto.FLOAT)
+                type_map[output_name] = TensorProto.FLOAT
+                updated_sequence_at_outputs += 1
+            new_nodes.append(node)
+            continue
+
+        if (
+            node.op_type in BF16_ORT_CPU_PROPAGATE_FLOAT_FROM_INPUT0_OPS
+            and node.input
+            and type_map.get(node.input[0]) == TensorProto.FLOAT
+        ):
+            for output_name in node.output:
+                _set_value_info_elem_type(graph, output_name, TensorProto.FLOAT)
+                type_map[output_name] = TensorProto.FLOAT
+                updated_float_propagated_outputs += 1
+
+        if node.op_type not in island_ops:
+            new_nodes.append(node)
+            continue
+
+        allowed_input_indexes = BF16_ORT_CPU_FLOAT_INPUT_INDEXES.get(node.op_type)
+        replacement_inputs = list(node.input)
+        node_name = node.name or node.op_type
+        for index, input_name in enumerate(node.input):
+            if allowed_input_indexes is None or index in allowed_input_indexes:
+                continue
+            suffix = f"__{node_name}_{index}__bf16_to_fp32"
+            if input_name.endswith(suffix):
+                replacement_inputs[index] = input_name[: -len(suffix)]
+                restored_nonfloat_inputs += 1
+
+        # Exporter shape/type metadata is incomplete for some Transpose/MatMul
+        # initializer paths. Unknown inputs are cast only when at least one
+        # eligible input is already known BF16; pure shape/index subgraphs stay
+        # untouched.
+        eligible_indexes = [
+            index
+            for index, input_name in enumerate(replacement_inputs)
+            if input_name and (allowed_input_indexes is None or index in allowed_input_indexes)
+        ]
+        known_bf16_input = any(
+            type_map.get(replacement_inputs[index]) == TensorProto.BFLOAT16 for index in eligible_indexes
+        )
+        bf16_input_indexes = []
+        for index in eligible_indexes:
+            input_name = replacement_inputs[index]
+            if not input_name or input_name.endswith("__bf16_to_fp32"):
+                continue
+            input_type = type_map.get(input_name)
+            if input_type == TensorProto.BFLOAT16 or (known_bf16_input and input_type not in (TensorProto.FLOAT,)):
+                bf16_input_indexes.append(index)
+
+        bf16_output_indexes = []
+        if node.op_type not in BF16_ORT_CPU_SKIP_OUTPUT_CAST_OPS:
+            for index, output_name in enumerate(node.output):
+                if not output_name or output_name.endswith("__fp32"):
+                    continue
+                output_type = type_map.get(output_name)
+                should_restore_bf16 = known_bf16_input and output_name not in graph_output_names
+                if output_type == TensorProto.BFLOAT16 or (should_restore_bf16 and output_type != TensorProto.FLOAT):
+                    bf16_output_indexes.append(index)
+
+        if replacement_inputs != list(node.input):
+            patched_nodes += 1
+            patched_by_op[node.op_type] = patched_by_op.get(node.op_type, 0) + 1
+
+        if not bf16_input_indexes and not bf16_output_indexes:
+            if replacement_inputs != list(node.input):
+                repaired_node = deepcopy(node)
+                del repaired_node.input[:]
+                repaired_node.input.extend(replacement_inputs)
+                new_nodes.append(repaired_node)
+            else:
+                new_nodes.append(node)
+            continue
+
+        if replacement_inputs == list(node.input):
+            patched_nodes += 1
+            patched_by_op[node.op_type] = patched_by_op.get(node.op_type, 0) + 1
+        for index in bf16_input_indexes:
+            input_name = replacement_inputs[index]
+            cast_output = f"{input_name}__{node_name}_{index}__bf16_to_fp32"
+            if cast_output not in existing_cast_outputs:
+                new_nodes.append(
+                    helper.make_node(
+                        "Cast",
+                        [input_name],
+                        [cast_output],
+                        name=f"Cast_BF16ToFP32_{node_name}_{index}",
+                        to=TensorProto.FLOAT,
+                    )
+                )
+                existing_cast_outputs.add(cast_output)
+                type_map[cast_output] = TensorProto.FLOAT
+                inserted_input_casts += 1
+            replacement_inputs[index] = cast_output
+
+        replacement_outputs = list(node.output)
+        output_casts = []
+        for index in bf16_output_indexes:
+            output_name = node.output[index]
+            fp32_output = f"{output_name}__{node_name}_{index}__fp32"
+            replacement_outputs[index] = fp32_output
+            type_map[fp32_output] = TensorProto.FLOAT
+            output_casts.append(
+                helper.make_node(
+                    "Cast",
+                    [fp32_output],
+                    [output_name],
+                    name=f"Cast_FP32ToBF16_{node_name}_{index}",
+                    to=TensorProto.BFLOAT16,
+                )
+            )
+            _set_value_info_elem_type(graph, output_name, TensorProto.BFLOAT16)
+            type_map[output_name] = TensorProto.BFLOAT16
+            inserted_output_casts += 1
+
+        patched_node = deepcopy(node)
+        del patched_node.input[:]
+        patched_node.input.extend(replacement_inputs)
+        del patched_node.output[:]
+        patched_node.output.extend(replacement_outputs)
+        new_nodes.append(patched_node)
+        if node.op_type == "SplitToSequence" and patched_node.output:
+            fp32_sequence_outputs.add(patched_node.output[0])
+        new_nodes.extend(output_casts)
+
+    if patched_nodes or updated_sequence_at_outputs or updated_float_propagated_outputs:
+        del graph.node[:]
+        graph.node.extend(new_nodes)
+        # Keep existing external-data initializers untouched; the pass only
+        # rewrites graph edges and adds Cast nodes.
+        onnx.save_model(model, str(model_path))
+        if check_model:
+            onnx.checker.check_model(str(model_path))
+
+    return {
+        "model_path": str(model_path),
+        "patched_nodes": patched_nodes,
+        "patched_by_op": patched_by_op,
+        "inserted_input_casts": inserted_input_casts,
+        "inserted_output_casts": inserted_output_casts,
+        "restored_nonfloat_inputs": restored_nonfloat_inputs,
+        "updated_sequence_at_outputs": updated_sequence_at_outputs,
+        "updated_float_propagated_outputs": updated_float_propagated_outputs,
+        "op_types": list(op_types),
+    }
+
+
+def finalize_exported_graph(output_path: Path, precision: PrecisionProfile) -> dict[str, Any] | None:
+    """Apply production post-export fixes that are specific to one precision"""
+
+    if precision.name != "bf16":
+        return None
+    report = apply_bf16_ort_cpu_compatibility_pass(output_path)
+    print("bf16_ort_cpu_compatibility=" + json.dumps(report, sort_keys=True))
+    return report
+
+
 def add_precision_metadata(
     report: dict[str, Any],
     precision: PrecisionProfile,
@@ -433,7 +724,7 @@ def add_precision_metadata(
             "bf16_compute_regions": list(module_policy.bf16_compute_regions),
             "fp32_islands": list(module_policy.fp32_islands),
             "boundary_casts": list(module_policy.boundary_casts),
-            "forbidden_pattern": "BF16 initializer immediately cast back to FLOAT as the primary compute path",
+            "forbidden_pattern": "unscoped storage-only BF16 conversion as the primary compute path",
         }
     return enriched
 

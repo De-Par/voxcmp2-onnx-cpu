@@ -7,6 +7,6 @@
 - Do not remove reference-audio path
 - Do not hardcode language
 - Do not merge everything into one ONNX model
-- FP32 correctness first, BF16 only as a later experiment
+- FP32 is the correctness anchor; BF16 is a production performance target, not a storage-only experiment
 - Always document blockers before changing math
 - Keep changes minimal and reversible

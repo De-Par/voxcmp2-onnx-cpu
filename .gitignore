@@ -13,10 +13,8 @@ __pycache__/
 # Upstream checkout is managed as an optional local submodule/worktree
 third_party/
 
-# Local model weights / exported ONNX graphs. Keep .onnx external data next to
-# the .onnx file, but keep the whole tree out of git
-models/onnx/
-models/hf/
+# Local model weights / exported ONNX graphs
+models/
 
 # Generated outputs: benchmark WAVs/JSON, reports, smoke samples, and logs
 artifacts/
