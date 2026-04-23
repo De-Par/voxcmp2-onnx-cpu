@@ -283,7 +283,25 @@ class VoxCPM2OnnxPipeline:
             max_decode_steps=effective_max_steps + self.config.decode_chunk_size,
         )
         rng = np.random.default_rng(seed)
-        generated: list[np.ndarray] = []
+        chunk_size = self.config.decode_chunk_size
+        diffusion_noise = np.empty((chunk_size, 1, self.config.feat_dim, self.config.patch_size), dtype=np.float32)
+        cfg_tensor = np.array([cfg_value], dtype=np.float32)
+        feature_buffer = np.empty((1, effective_max_steps, self.config.patch_size, self.config.feat_dim), dtype=np.float32)
+        decode_inputs = {
+            "lm_hidden": state["lm_hidden"],
+            "residual_hidden": state["residual_hidden"],
+            "prefix_feat_cond": state["prefix_feat_cond"],
+            "base_k_cache": state["base_k_cache"],
+            "base_v_cache": state["base_v_cache"],
+            "base_current_length": state["base_current_length"],
+            "residual_k_cache": state["residual_k_cache"],
+            "residual_v_cache": state["residual_v_cache"],
+            "residual_current_length": state["residual_current_length"],
+            "diffusion_noise": diffusion_noise,
+            "cfg_value": cfg_tensor,
+        }
+        decode_outputs: dict[str, np.ndarray] = {}
+        decode_session = self.sessions.decode_chunk
         stop_reason: StopReason | None = None
         completed_steps = 0
 
@@ -292,34 +310,14 @@ class VoxCPM2OnnxPipeline:
             # autoregressive decode steps. Host code still owns stop policy,
             # cache mutation, and the outer loop.
             remaining_steps = effective_max_steps - completed_steps
-            accepted_steps = min(self.config.decode_chunk_size, remaining_steps)
-            decode_inputs = {
-                "lm_hidden": state["lm_hidden"],
-                "residual_hidden": state["residual_hidden"],
-                "prefix_feat_cond": state["prefix_feat_cond"],
-                "base_k_cache": state["base_k_cache"],
-                "base_v_cache": state["base_v_cache"],
-                "base_current_length": state["base_current_length"],
-                "residual_k_cache": state["residual_k_cache"],
-                "residual_v_cache": state["residual_v_cache"],
-                "residual_current_length": state["residual_current_length"],
-                "diffusion_noise": rng.standard_normal(
-                    (
-                        self.config.decode_chunk_size,
-                        1,
-                        self.config.feat_dim,
-                        self.config.patch_size,
-                    ),
-                    dtype=np.float32,
-                ),
-                "cfg_value": np.array([cfg_value], dtype=np.float32),
-            }
-            outputs = dict(
-                zip(DECODE_OUTPUTS, self.sessions.decode_chunk.run(DECODE_OUTPUTS, decode_inputs), strict=True)
-            )
+            accepted_steps = min(chunk_size, remaining_steps)
+            self._fill_standard_normal(rng, diffusion_noise)
+            run_outputs = decode_session.run(DECODE_OUTPUTS, decode_inputs)
+            for name, value in zip(DECODE_OUTPUTS, run_outputs, strict=True):
+                decode_outputs[name] = value
             accepted_steps = self._accept_decode_chunk_outputs(
-                outputs,
-                generated=generated,
+                decode_outputs,
+                feature_buffer=feature_buffer,
                 completed_steps=completed_steps,
                 candidate_steps=accepted_steps,
                 effective_max_steps=effective_max_steps,
@@ -329,7 +327,7 @@ class VoxCPM2OnnxPipeline:
             )
             completed_steps += accepted_steps
             stop_reason = self._chunk_stop_reason(
-                outputs,
+                decode_outputs,
                 accepted_steps=accepted_steps,
                 completed_steps=completed_steps,
                 effective_max_steps=effective_max_steps,
@@ -338,12 +336,15 @@ class VoxCPM2OnnxPipeline:
             )
             if stop_reason is not None:
                 break
-            self._apply_decode_chunk_cache_updates(state, outputs, update_steps=accepted_steps)
-            state["lm_hidden"] = outputs["next_lm_hidden"]
-            state["residual_hidden"] = outputs["next_residual_hidden"]
-            state["prefix_feat_cond"] = outputs["next_prefix_feat_cond"]
+            self._apply_decode_chunk_cache_updates(state, decode_outputs, update_steps=accepted_steps)
+            state["lm_hidden"] = decode_outputs["next_lm_hidden"]
+            state["residual_hidden"] = decode_outputs["next_residual_hidden"]
+            state["prefix_feat_cond"] = decode_outputs["next_prefix_feat_cond"]
+            decode_inputs["lm_hidden"] = state["lm_hidden"]
+            decode_inputs["residual_hidden"] = state["residual_hidden"]
+            decode_inputs["prefix_feat_cond"] = state["prefix_feat_cond"]
 
-        feature_seq = np.concatenate(generated, axis=1)
+        feature_seq = feature_buffer[:, :completed_steps, :, :]
         # AudioVAEDecoder expects [B, latent_dim, latent_steps]. The decode
         # graph emits patch features, so host code performs the reversible layout
         # transform before the final ONNX decoder call.
@@ -358,7 +359,7 @@ class VoxCPM2OnnxPipeline:
         return SynthesisResult(
             waveform=waveform[0, 0].astype(np.float32, copy=False),
             metadata=SynthesisMetadata(
-                decode_steps=len(generated),
+                decode_steps=completed_steps,
                 stop_reason=stop_reason or ("safety_max_steps" if max_steps == 0 else "max_steps"),
                 requested_max_steps=max_steps,
                 effective_max_steps=effective_max_steps,
@@ -397,6 +398,15 @@ class VoxCPM2OnnxPipeline:
         }
 
     @staticmethod
+    def _fill_standard_normal(rng: np.random.Generator, target: np.ndarray) -> None:
+        """Fill an existing FP32 buffer with Gaussian noise for one decode chunk."""
+
+        try:
+            rng.standard_normal(size=target.shape, dtype=target.dtype, out=target)
+        except TypeError:
+            target[...] = rng.standard_normal(target.shape, dtype=target.dtype)
+
+    @staticmethod
     def _apply_decode_cache_updates(state: dict[str, np.ndarray], outputs: dict[str, np.ndarray]) -> None:
         """Apply one-position K/V updates returned by the fixed-cache graph"""
 
@@ -413,7 +423,7 @@ class VoxCPM2OnnxPipeline:
     def _accept_decode_chunk_outputs(
         outputs: dict[str, np.ndarray],
         *,
-        generated: list[np.ndarray],
+        feature_buffer: np.ndarray,
         completed_steps: int,
         candidate_steps: int,
         effective_max_steps: int,
@@ -432,12 +442,14 @@ class VoxCPM2OnnxPipeline:
                 requested_max_steps=requested_max_steps,
                 min_steps=min_steps,
             )
-            generated.append(outputs["pred_audio_feature"][:, chunk_index : chunk_index + 1, :, :])
             accepted_steps += 1
             if progress_callback is not None:
                 progress_callback(next_completed_steps, step_stop_reason)
             if step_stop_reason is not None:
                 break
+        feature_buffer[:, completed_steps : completed_steps + accepted_steps, :, :] = outputs["pred_audio_feature"][
+            :, :accepted_steps, :, :
+        ]
         return accepted_steps
 
     @staticmethod
@@ -471,7 +483,7 @@ class VoxCPM2OnnxPipeline:
         requested_max_steps: int,
         min_steps: int,
     ) -> StopReason | None:
-        if completed_steps >= min_steps and int(np.argmax(stop_logits[:, chunk_index, :], axis=-1)[0]) == 1:
+        if completed_steps >= min_steps and int(stop_logits[0, chunk_index].argmax()) == 1:
             return "stop_logits"
         if completed_steps >= effective_max_steps:
             return "safety_max_steps" if requested_max_steps == 0 else "max_steps"
@@ -500,8 +512,8 @@ class VoxCPM2OnnxPipeline:
         state["residual_v_cache"][:, :, :, residual_index : residual_index + update_steps, :] = outputs[
             "residual_v_update"
         ][:, :, :, :update_steps, :]
-        state["base_current_length"] = np.array([base_index + update_steps], dtype=np.int64)
-        state["residual_current_length"] = np.array([residual_index + update_steps], dtype=np.int64)
+        state["base_current_length"][0] = base_index + update_steps
+        state["residual_current_length"][0] = residual_index + update_steps
 
     def write_wav(self, path: str | Path, waveform: np.ndarray) -> None:
         # WAV writing is intentionally host code, not ONNX. int16 output keeps
