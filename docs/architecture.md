@@ -239,6 +239,21 @@ The traffic goal is to remove output-cache growth and amortize Python/ORT sessio
 - Do not insert silent runtime precision conversions.
 - FP32 and BF16 select different artifact paths, not different runtime semantics.
 
+Default ORT CPU session policy is shared by FP32 and BF16:
+
+```text
+graph_optimization_level=all
+execution_mode=sequential
+log_severity_level=error
+intra_op_num_threads=8
+inter_op_num_threads=1
+enable_mem_pattern=true
+enable_cpu_mem_arena=true
+enable_mem_reuse=true
+```
+
+This is a production default, not a separate precision profile. If future benchmark data proves a materially better setting for one precision, the override must be documented in `docs/benchmarking.md` and must keep the same runtime implementation.
+
 ## 🔎 Runtime Dependency Audit
 
 Runtime path:

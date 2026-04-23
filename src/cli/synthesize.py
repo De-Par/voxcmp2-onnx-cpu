@@ -106,7 +106,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ort-graph-optimization",
         choices=graph_optimization_choices,
-        default="disable",
+        default="all",
         help="ONNX Runtime graph optimization level for all CPU sessions.",
     )
     parser.add_argument(
@@ -118,18 +118,38 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ort-log-severity",
         choices=log_severity_choices,
-        default="warning",
+        default="error",
         help="Minimum ONNX Runtime log severity emitted by CPU sessions.",
     )
     parser.add_argument(
         "--ort-intra-op-threads",
         type=int,
-        help="ONNX Runtime intra-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
+        default=8,
+        help="ONNX Runtime intra-op thread count. Use 0 to request ORT default scheduling.",
     )
     parser.add_argument(
         "--ort-inter-op-threads",
         type=int,
-        help="ONNX Runtime inter-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
+        default=1,
+        help="ONNX Runtime inter-op thread count. Use 0 to request ORT default scheduling.",
+    )
+    parser.add_argument(
+        "--ort-enable-mem-pattern",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT memory pattern planning for CPU sessions.",
+    )
+    parser.add_argument(
+        "--ort-enable-cpu-mem-arena",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT CPU memory arena for repeated allocations.",
+    )
+    parser.add_argument(
+        "--ort-enable-mem-reuse",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT memory reuse inside CPU sessions.",
     )
     parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local model files.")
     parser.add_argument(
@@ -156,6 +176,9 @@ def main() -> int:
         log_severity_level=args.ort_log_severity,
         intra_op_num_threads=args.ort_intra_op_threads,
         inter_op_num_threads=args.ort_inter_op_threads,
+        enable_mem_pattern=args.ort_enable_mem_pattern,
+        enable_cpu_mem_arena=args.ort_enable_cpu_mem_arena,
+        enable_mem_reuse=args.ort_enable_mem_reuse,
         max_audio_encoder_samples=args.max_audio_encoder_samples,
         max_decoder_latent_steps=args.max_decoder_latent_steps,
         max_prefill_seq_len=args.max_prefill_seq_len,

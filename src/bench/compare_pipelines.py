@@ -3,8 +3,8 @@
 
 The script writes one WAV per requested variant, prints a compact human-readable
 summary, and saves machine-readable JSON to disk. It intentionally keeps model
-paths explicit so BF16 artifacts remain an experiment and never replace the FP32
-runtime defaults.
+paths explicit so FP32 and BF16 production artifacts can be compared without
+changing the single runtime implementation.
 """
 
 from __future__ import annotations
@@ -200,6 +200,9 @@ def _run_onnx(args: argparse.Namespace, variant: Variant, output_wav: Path) -> B
         log_severity_level=args.onnx_log_severity,
         intra_op_num_threads=args.onnx_intra_op_threads,
         inter_op_num_threads=args.onnx_inter_op_threads,
+        enable_mem_pattern=args.onnx_enable_mem_pattern,
+        enable_cpu_mem_arena=args.onnx_enable_cpu_mem_arena,
+        enable_mem_reuse=args.onnx_enable_mem_reuse,
         max_audio_encoder_samples=args.max_audio_encoder_samples,
         max_decoder_latent_steps=args.max_decoder_latent_steps,
         max_prefill_seq_len=args.max_prefill_seq_len,
@@ -389,7 +392,9 @@ def _print_header(args: argparse.Namespace) -> None:
         f"log={args.onnx_log_severity}, "
         f"preload_sessions={'yes' if args.onnx_preload_sessions else 'no'}, "
         f"intra_op={args.onnx_intra_op_threads if args.onnx_intra_op_threads is not None else 'default'}, "
-        f"inter_op={args.onnx_inter_op_threads if args.onnx_inter_op_threads is not None else 'default'}",
+        f"inter_op={args.onnx_inter_op_threads if args.onnx_inter_op_threads is not None else 'default'}, "
+        f"mem_pattern={args.onnx_enable_mem_pattern}, "
+        f"cpu_arena={args.onnx_enable_cpu_mem_arena}, mem_reuse={args.onnx_enable_mem_reuse}",
         flush=True,
     )
     print(
@@ -540,11 +545,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--onnx-graph-optimization",
         choices=graph_optimization_choices,
-        default="disable",
-        help=(
-            "ONNX Runtime graph optimization level for ONNX variants. "
-            "Default stays conservative for FP32 parity; use all/extended for performance experiments."
-        ),
+        default="all",
+        help="ONNX Runtime graph optimization level for ONNX variants.",
     )
     parser.add_argument(
         "--onnx-execution-mode",
@@ -573,12 +575,32 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--onnx-intra-op-threads",
         type=int,
-        help="ONNX Runtime intra-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
+        default=8,
+        help="ONNX Runtime intra-op thread count. Use 0 to request ORT default scheduling.",
     )
     parser.add_argument(
         "--onnx-inter-op-threads",
         type=int,
-        help="ONNX Runtime inter-op thread count. Omit for ORT default; 0 also requests ORT default scheduling.",
+        default=1,
+        help="ONNX Runtime inter-op thread count. Use 0 to request ORT default scheduling.",
+    )
+    parser.add_argument(
+        "--onnx-enable-mem-pattern",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT memory pattern planning for ONNX CPU sessions.",
+    )
+    parser.add_argument(
+        "--onnx-enable-cpu-mem-arena",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT CPU memory arena for ONNX CPU sessions.",
+    )
+    parser.add_argument(
+        "--onnx-enable-mem-reuse",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT memory reuse for ONNX CPU sessions.",
     )
     parser.add_argument(
         "--max-audio-encoder-samples", type=int, help="Runtime/export bound for reference audio samples."

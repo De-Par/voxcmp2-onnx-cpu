@@ -22,17 +22,32 @@ All options keep `CPUExecutionProvider` only.
 | log severity | `verbose`, `info`, `warning`, `error`, `fatal` |
 | intra-op threads | integer or ORT default |
 | inter-op threads | integer or ORT default |
+| memory pattern | enabled, disabled, or ORT default |
+| CPU memory arena | enabled, disabled, or ORT default |
+| memory reuse | enabled, disabled, or ORT default |
 | shape bounds | must match the exported production shape profile |
 
-Default runtime settings remain conservative for parity/debug work:
+Current production defaults are shared by FP32 and BF16 artifacts:
 
 ```text
-graph_optimization_level=disable
+graph_optimization_level=all
 execution_mode=sequential
-log_severity_level=warning
-intra_op_num_threads=default
-inter_op_num_threads=default
+log_severity_level=error
+intra_op_num_threads=8
+inter_op_num_threads=1
+enable_mem_pattern=true
+enable_cpu_mem_arena=true
+enable_mem_reuse=true
 ```
+
+These are one runtime path, not precision-specific forks. Precision-specific overrides are allowed only if a session sweep shows a repeatable improvement above the configured threshold.
+
+Why this default is used now:
+
+- local voice-design benchmark with conservative ORT settings measured ONNX FP32 at roughly `478.9 s` synthesis time
+- the same workload with `graph_optimization=all`, `execution=sequential`, `intra=8`, `inter=1` measured ONNX FP32 at roughly `80.0 s`
+- BF16 storage/compute artifacts must still load successfully under ORT CPU before a BF16-specific recommendation is accepted
+- if a BF16 graph fails to load because an op lacks BF16 CPU support, the sweep records the failure and the runtime default stays common
 
 The benchmark CLI preloads selected ONNX sessions during the load phase by default. Use `--no-onnx-preload-sessions` only when measuring first-request latency.
 
@@ -84,6 +99,60 @@ python -B src/bench/compare_pipelines.py \
 ```
 
 The benchmark prints readable console output and writes JSON. It records WAV path, load time, synthesis time, total time, sample rate, sample count, output duration, peak, RMS, decode steps, and stop reason.
+
+## 🎚️ ORT Session Config Sweep
+
+Run the focused sweep across the current FP32 and BF16 production artifacts:
+
+```bash
+python -B tools/bench/sweep_ort_config.py \
+  --output-dir artifacts/ort_session_sweep \
+  --json-report artifacts/ort_session_sweep/ort_session_sweep.json \
+  --markdown-report artifacts/ort_session_sweep/ort_session_sweep.md \
+  --precisions fp32 bf16 \
+  --cases text_only_short voice_design_short \
+  --config-preset focused \
+  --repeats 1 \
+  --max-steps 8 \
+  --min-steps 8
+```
+
+Fast smoke of only the current recommended config:
+
+```bash
+python -B tools/bench/sweep_ort_config.py \
+  --output-dir artifacts/ort_session_sweep_smoke \
+  --config-preset recommended \
+  --precisions fp32 bf16 \
+  --cases text_only_short \
+  --max-steps 1 \
+  --min-steps 0
+```
+
+Full cartesian sweep, when runtime is acceptable:
+
+```bash
+python -B tools/bench/sweep_ort_config.py \
+  --output-dir artifacts/ort_session_sweep_full \
+  --config-preset full \
+  --precisions fp32 bf16 \
+  --cases text_only_short voice_design_short controllable_clone_short \
+  --max-steps 0 \
+  --min-steps 8
+```
+
+The sweep varies graph optimization, execution mode, intra/inter-op threads, and memory profiles. It writes:
+
+- `ort_session_sweep.json`: raw per-run records and aggregate timings
+- `ort_session_sweep.md`: ranked configs, common recommendation, and optional precision-specific override candidates
+- WAVs under `<output-dir>/wavs/` for failed-audio inspection
+
+Selection policy:
+
+- choose one common config that succeeds for every selected precision
+- rank by aggregate mean synthesis latency across selected cases and precisions
+- recommend a precision-specific override only when it beats the common config by at least `--override-threshold` (default `0.10`)
+- do not change model math, export graph, precision policy, or runtime stop/cache semantics during the sweep
 
 ## 🧪 Production Baseline Matrix
 

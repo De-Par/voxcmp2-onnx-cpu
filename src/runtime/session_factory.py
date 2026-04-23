@@ -63,11 +63,14 @@ class OrtSessionFactory:
 
     paths: OnnxModelPaths = field(default_factory=OnnxModelPaths)
     disable_graph_optimizations: bool | None = None
-    graph_optimization_level: str = "disable"
+    graph_optimization_level: str = "all"
     execution_mode: str = "sequential"
-    log_severity_level: str = "warning"
-    intra_op_num_threads: int | None = None
-    inter_op_num_threads: int | None = None
+    log_severity_level: str = "error"
+    intra_op_num_threads: int | None = 8
+    inter_op_num_threads: int | None = 1
+    enable_mem_pattern: bool | None = True
+    enable_cpu_mem_arena: bool | None = True
+    enable_mem_reuse: bool | None = True
     enable_profiling: bool = False
     profile_file_prefix: Path | None = None
     _sessions: dict[str, ort.InferenceSession] = field(default_factory=dict, init=False, repr=False)
@@ -137,6 +140,9 @@ class OrtSessionFactory:
             ) from exc
         self._set_thread_option(options, "intra_op_num_threads", self.intra_op_num_threads)
         self._set_thread_option(options, "inter_op_num_threads", self.inter_op_num_threads)
+        self._set_optional_bool_option(options, "enable_mem_pattern", self.enable_mem_pattern)
+        self._set_optional_bool_option(options, "enable_cpu_mem_arena", self.enable_cpu_mem_arena)
+        self._set_optional_bool_option(options, "enable_mem_reuse", self.enable_mem_reuse)
         if self.enable_profiling:
             options.enable_profiling = True
             if self.profile_file_prefix is not None:
@@ -153,6 +159,9 @@ class OrtSessionFactory:
             "log_severity_level": self.log_severity_level,
             "intra_op_num_threads": self.intra_op_num_threads,
             "inter_op_num_threads": self.inter_op_num_threads,
+            "enable_mem_pattern": self.enable_mem_pattern,
+            "enable_cpu_mem_arena": self.enable_cpu_mem_arena,
+            "enable_mem_reuse": self.enable_mem_reuse,
             "enable_profiling": self.enable_profiling,
             "profile_file_prefix": str(self.profile_file_prefix) if self.profile_file_prefix else None,
         }
@@ -181,6 +190,14 @@ class OrtSessionFactory:
         if value < 0:
             raise ValueError(f"{name} must be >= 0; use 0 or omit it for ORT default scheduling")
         setattr(options, name, value)
+
+    @staticmethod
+    def _set_optional_bool_option(options: ort.SessionOptions, name: str, value: bool | None) -> None:
+        if value is None:
+            return
+        if not hasattr(options, name):
+            raise RuntimeError(f"Installed ONNX Runtime does not expose SessionOptions.{name}")
+        setattr(options, name, bool(value))
 
     def _profile_prefix_for_session(self, session_name: str) -> Path:
         assert self.profile_file_prefix is not None

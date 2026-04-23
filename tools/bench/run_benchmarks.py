@@ -210,6 +210,9 @@ def _load_onnx(args: argparse.Namespace) -> LoadedVariant:
         log_severity_level=args.onnx_log_severity,
         intra_op_num_threads=args.onnx_intra_op_threads,
         inter_op_num_threads=args.onnx_inter_op_threads,
+        enable_mem_pattern=args.onnx_enable_mem_pattern,
+        enable_cpu_mem_arena=args.onnx_enable_cpu_mem_arena,
+        enable_mem_reuse=args.onnx_enable_mem_reuse,
         max_audio_encoder_samples=args.max_audio_encoder_samples,
         max_decoder_latent_steps=args.max_decoder_latent_steps,
         max_prefill_seq_len=args.max_prefill_seq_len,
@@ -607,6 +610,9 @@ def _make_report(
                 "preload_sessions": args.onnx_preload_sessions,
                 "intra_op_threads": args.onnx_intra_op_threads,
                 "inter_op_threads": args.onnx_inter_op_threads,
+                "enable_mem_pattern": args.onnx_enable_mem_pattern,
+                "enable_cpu_mem_arena": args.onnx_enable_cpu_mem_arena,
+                "enable_mem_reuse": args.onnx_enable_mem_reuse,
                 "max_audio_encoder_samples": args.max_audio_encoder_samples,
                 "max_decoder_latent_steps": args.max_decoder_latent_steps,
                 "max_prefill_seq_len": args.max_prefill_seq_len,
@@ -652,6 +658,9 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- ONNX graph optimization: `{report['config']['onnx']['graph_optimization']}`",
         f"- ONNX threads: intra=`{intra_threads if intra_threads is not None else 'default'}`, "
         f"inter=`{inter_threads if inter_threads is not None else 'default'}`",
+        f"- ONNX memory: mem_pattern=`{report['config']['onnx']['enable_mem_pattern']}`, "
+        f"cpu_arena=`{report['config']['onnx']['enable_cpu_mem_arena']}`, "
+        f"mem_reuse=`{report['config']['onnx']['enable_mem_reuse']}`",
         "",
         "## Summary",
         "",
@@ -734,7 +743,9 @@ def _print_progress_header(args: argparse.Namespace, json_report: Path, markdown
     print(
         "ONNX ORT       : "
         f"graph_opt={args.onnx_graph_optimization}, execution={args.onnx_execution_mode}, "
-        f"intra={args.onnx_intra_op_threads or 'default'}, inter={args.onnx_inter_op_threads or 'default'}",
+        f"intra={args.onnx_intra_op_threads or 'default'}, inter={args.onnx_inter_op_threads or 'default'}, "
+        f"mem_pattern={args.onnx_enable_mem_pattern}, cpu_arena={args.onnx_enable_cpu_mem_arena}, "
+        f"mem_reuse={args.onnx_enable_mem_reuse}",
         flush=True,
     )
     print(flush=True)
@@ -836,7 +847,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--official-retry-badcase-ratio-threshold", type=float, default=6.0, help="Retry threshold.")
     parser.add_argument("--show-official-output", action="store_true", help="Show official API tqdm/log output.")
 
-    parser.add_argument("--onnx-graph-optimization", choices=graph_choices, default="disable", help="ORT graph opt.")
+    parser.add_argument("--onnx-graph-optimization", choices=graph_choices, default="all", help="ORT graph opt.")
     parser.add_argument("--onnx-execution-mode", choices=execution_choices, default="sequential", help="ORT mode.")
     parser.add_argument("--onnx-log-severity", choices=log_choices, default="error", help="ORT log severity.")
     parser.add_argument(
@@ -845,8 +856,26 @@ def _parser() -> argparse.ArgumentParser:
         default=True,
         help="Create all ONNX sessions during model load.",
     )
-    parser.add_argument("--onnx-intra-op-threads", type=int, help="ORT intra-op threads. Omit for default.")
-    parser.add_argument("--onnx-inter-op-threads", type=int, help="ORT inter-op threads. Omit for default.")
+    parser.add_argument("--onnx-intra-op-threads", type=int, default=8, help="ORT intra-op threads. Use 0 for default.")
+    parser.add_argument("--onnx-inter-op-threads", type=int, default=1, help="ORT inter-op threads. Use 0 for default.")
+    parser.add_argument(
+        "--onnx-enable-mem-pattern",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT memory pattern planning.",
+    )
+    parser.add_argument(
+        "--onnx-enable-cpu-mem-arena",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT CPU memory arena.",
+    )
+    parser.add_argument(
+        "--onnx-enable-mem-reuse",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable ORT memory reuse.",
+    )
     parser.add_argument(
         "--max-audio-encoder-samples", type=int, help="Runtime/export bound for reference audio samples."
     )

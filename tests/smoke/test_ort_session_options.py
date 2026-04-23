@@ -39,9 +39,12 @@ def test_ort_session_options_are_configurable_without_creating_sessions() -> Non
         "provider": "CPUExecutionProvider",
         "graph_optimization_level": "extended",
         "execution_mode": "parallel",
-        "log_severity_level": "warning",
+        "log_severity_level": "error",
         "intra_op_num_threads": 2,
         "inter_op_num_threads": 1,
+        "enable_mem_pattern": True,
+        "enable_cpu_mem_arena": True,
+        "enable_mem_reuse": True,
         "enable_profiling": False,
         "profile_file_prefix": None,
     }
@@ -51,6 +54,9 @@ def test_ort_session_options_are_configurable_without_creating_sessions() -> Non
     assert options.execution_mode == ort.ExecutionMode.ORT_PARALLEL
     assert options.intra_op_num_threads == 2
     assert options.inter_op_num_threads == 1
+    assert options.enable_mem_pattern is True
+    assert options.enable_cpu_mem_arena is True
+    assert options.enable_mem_reuse is True
 
 
 def test_ort_session_options_reject_invalid_values() -> None:

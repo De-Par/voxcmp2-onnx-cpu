@@ -66,7 +66,7 @@ Host code owns everything that is not neural module execution:
 - fixed-capacity cache mutation between decode chunks
 - NumPy random diffusion noise
 
-The full contract is in [docs/architecture.md](docs/architecture.md).
+The full contract is in [docs/architecture.md](docs/architecture.md)
 
 
 ## 🗂️ Repository Layout
@@ -81,7 +81,7 @@ The full contract is in [docs/architecture.md](docs/architecture.md).
 │   ├── parity/        # official generate-path tracing
 │   └── contracts/     # typed module-boundary schemas
 ├── tools/
-│   ├── bench/         # production baseline benchmark runner
+│   ├── bench/         # production baseline and ORT session sweep runners
 │   └── profile/       # ORT profiling and Cast-summary tools
 ├── tests/
 │   ├── export/        # export contract and dtype cleanup tests
@@ -341,6 +341,21 @@ python -B src/bench/compare_pipelines.py \
   --variants orig onnx_fp32 onnx_bf16
 ```
 
+ORT session sweep for the shared FP32/BF16 production runtime:
+
+```bash
+python -B tools/bench/sweep_ort_config.py \
+  --output-dir artifacts/ort_session_sweep \
+  --json-report artifacts/ort_session_sweep/ort_session_sweep.json \
+  --markdown-report artifacts/ort_session_sweep/ort_session_sweep.md \
+  --precisions fp32 bf16 \
+  --cases text_only_short voice_design_short \
+  --config-preset focused \
+  --repeats 1 \
+  --max-steps 8 \
+  --min-steps 8
+```
+
 Production baseline matrix:
 
 ```bash
@@ -371,7 +386,11 @@ python -B tools/profile/summarize_dtype_casts.py \
   --markdown-report artifacts/reports/dtype_cleanup_casts.md
 ```
 
-Benchmark details are in [docs/benchmarking.md](docs/benchmarking.md).
+Benchmark details are in [docs/benchmarking.md](docs/benchmarking.md)
+
+The default production ORT session policy is shared by FP32 and BF16:
+`graph_optimization=all`, `execution=sequential`, `intra_op_threads=8`, `inter_op_threads=1`,
+and ORT memory pattern / CPU arena / memory reuse enabled. Use the sweep command above before changing it.
 
 
 ## 🧪 Development Checks
