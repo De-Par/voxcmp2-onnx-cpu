@@ -161,6 +161,28 @@ onnx_bf16 synth=85.804s
 
 The gap is consistent with decode chunk node time plus BF16 compatibility islands. It is not primarily caused by WAV I/O, tokenizer work, Python dict construction, or final feature accumulation.
 
+The runtime must not allocate auto-stop KV cache from the safety cap. Current
+runtime starts `max_steps=0` with `decode_auto_initial_steps=16` and grows cache
+in blocks only if needed. On the local BF16 text-only case, this reduced
+production `graph_optimization=all` synthesis from the previously observed
+`59-84 s` range to `32.34 s` for one measured run with the same 12 decode steps.
+Startup remained high because ONNX Runtime still creates sessions from multi-GB
+ONNX graphs.
+
+For startup latency, convert exported `.onnx` graphs to ORT format offline:
+
+```bash
+python -B -m onnxruntime.tools.convert_onnx_models_to_ort \
+  models/onnx/bf16 \
+  --optimization_style Fixed \
+  --allow_conversion_failures \
+  --target_platform <arm|amd64>
+```
+
+The runtime automatically prefers sibling `.ort` files when present and falls
+back to `.onnx` otherwise. Use the same command for `models/onnx/fp32` when
+benchmarking FP32 startup.
+
 ## IO Binding Probe
 
 CPU IO binding is available in the installed ONNX Runtime, but it should not be added to the production runtime unless it gives a repeatable win. Probe the hottest module directly:

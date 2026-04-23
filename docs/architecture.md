@@ -187,12 +187,15 @@ flowchart LR
     style C fill:#DC2626,stroke:#ffffff,stroke-width:2px,color:#ffffff
 ```
 
-The production contract uses fixed-capacity tensors:
+The production contract uses fixed-capacity tensors per decode chunk. For
+`max_steps=0`, the safety cap is not treated as the initial cache size; runtime
+starts with a bounded cache window and grows by blocks only if stop logits do
+not arrive before the current capacity is exhausted.
 
 ```mermaid
 flowchart LR
-    A["prefill_length"] --> C["max_cache_seq = prefill_length + effective_max_decode_steps"]
-    B["effective_max_decode_steps"] --> C
+    A["prefill_length"] --> C["cache_capacity = prefill_length + active_decode_window"]
+    B["active_decode_window"] --> C
 
     style A fill:#10B981,stroke:#000000,stroke-width:,color:#ffffff
     style B fill:#F59E0B,stroke:#000000,stroke-width:2px,color:#ffffff
@@ -228,12 +231,26 @@ residual_v_cache[:, :, :, residual_current_length:residual_current_length + acce
 
 The traffic goal is to remove output-cache growth and amortize Python/ORT session boundary overhead. Old grow-by-concat output payload per step was `2 * K * (S + 1)`. The chunked fixed-cache payload per session is `2 * K * chunk_size`, where `K = (base_layers + residual_layers) * batch * kv_heads * head_dim`.
 
+For auto-stop requests, the runtime default is:
+
+```text
+decode_auto_initial_steps = 16
+decode_cache_growth_steps = 64
+decode_safety_max_steps   = 4096
+```
+
+This avoids passing thousands of unused KV-cache positions into every
+`decode_chunk` call for short sentences. Explicit `--max-steps N` still uses `N`
+as the requested upper bound.
+
 ## 🛡️ Runtime Rules
 
 - Use only `CPUExecutionProvider`.
 - Do not fall back to CUDA, CoreML, DirectML, MPS, or any accelerator provider.
 - Load sessions lazily.
 - Keep ONNX external-data files next to their `.onnx` files.
+- Prefer sibling `.ort` files when they exist; ORT-format artifacts are the
+  startup-latency path for very large graphs.
 - Fail fast with actionable errors for missing modules or external data.
 - Do not change model math in runtime code.
 - Do not insert silent runtime precision conversions.

@@ -73,6 +73,7 @@ class OrtSessionFactory:
     enable_mem_reuse: bool | None = True
     enable_profiling: bool = False
     profile_file_prefix: Path | None = None
+    prefer_ort_format: bool = True
     _sessions: dict[str, ort.InferenceSession] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -85,12 +86,13 @@ class OrtSessionFactory:
         missing: list[str] = []
         resolved: dict[str, Path] = {}
         for name, path in self.paths.items():
+            path = self._preferred_path(path)
             resolved[name] = path
             if not path.is_file():
                 missing.append(f"{name}: {path}")
                 continue
-            data_path = path.with_suffix(path.suffix + ".data")
-            if not data_path.is_file():
+            data_path = self._external_data_path(path)
+            if data_path is not None and not data_path.is_file():
                 missing.append(f"{name}_external_data: {data_path}")
         if missing:
             raise FileNotFoundError("Missing ONNX model files:\n" + "\n".join(missing))
@@ -164,6 +166,7 @@ class OrtSessionFactory:
             "enable_mem_reuse": self.enable_mem_reuse,
             "enable_profiling": self.enable_profiling,
             "profile_file_prefix": str(self.profile_file_prefix) if self.profile_file_prefix else None,
+            "prefer_ort_format": self.prefer_ort_format,
         }
 
     def end_profiling(self) -> dict[str, Path]:
@@ -208,6 +211,7 @@ class OrtSessionFactory:
 
     def _get(self, name: str, path: Path) -> ort.InferenceSession:
         if name not in self._sessions:
+            path = self._preferred_path(path)
             self._assert_path(name, path)
             # Providers are passed explicitly to avoid implicit accelerator
             # fallback on machines that happen to have GPU/CoreML packages.
@@ -221,11 +225,23 @@ class OrtSessionFactory:
         return self._sessions[name]
 
     @staticmethod
-    def _assert_path(name: str, path: Path) -> None:
+    def _external_data_path(path: Path) -> Path | None:
+        if path.suffix != ".onnx":
+            return None
+        return path.with_suffix(path.suffix + ".data")
+
+    def _preferred_path(self, path: Path) -> Path:
+        if self.prefer_ort_format and path.suffix == ".onnx":
+            ort_path = path.with_suffix(".ort")
+            if ort_path.is_file():
+                return ort_path
+        return path
+
+    def _assert_path(self, name: str, path: Path) -> None:
         if not path.is_file():
-            raise FileNotFoundError(f"{name} ONNX file not found: {path}")
-        data_path = path.with_suffix(path.suffix + ".data")
-        if not data_path.is_file():
+            raise FileNotFoundError(f"{name} model file not found: {path}")
+        data_path = self._external_data_path(path)
+        if data_path is not None and not data_path.is_file():
             raise FileNotFoundError(f"{name} external data file not found: {data_path}")
 
     @staticmethod

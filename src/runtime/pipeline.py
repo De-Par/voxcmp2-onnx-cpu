@@ -109,6 +109,8 @@ class VoxCPM2RuntimeConfig:
     audio_chunk_size: int = 640
     decode_chunk_size: int = 4
     decode_safety_max_steps: int = 4096
+    decode_auto_initial_steps: int = 16
+    decode_cache_growth_steps: int = 64
     max_audio_encoder_samples: int = 960_000
     max_decoder_latent_steps: int = 16_384
     max_prefill_seq_len: int = 1_024
@@ -154,6 +156,7 @@ class VoxCPM2OnnxPipeline:
         enable_mem_reuse: bool | None = True,
         enable_profiling: bool = False,
         profile_file_prefix: Path | None = None,
+        prefer_ort_format: bool = True,
         max_audio_encoder_samples: int | None = None,
         max_decoder_latent_steps: int | None = None,
         max_prefill_seq_len: int | None = None,
@@ -180,6 +183,7 @@ class VoxCPM2OnnxPipeline:
             enable_mem_reuse=enable_mem_reuse,
             enable_profiling=enable_profiling,
             profile_file_prefix=profile_file_prefix,
+            prefer_ort_format=prefer_ort_format,
         )
         return cls(sessions=sessions, config=config)
 
@@ -274,13 +278,14 @@ class VoxCPM2OnnxPipeline:
 
         prefill_outputs = self.sessions.prefill.run(PREFILL_OUTPUTS, sequence)
         prefill_state = dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True))
-        self._validate_decode_cache_capacity(
-            prefill_state,
-            max_decode_steps=effective_max_steps + self.config.decode_chunk_size,
+        initial_cache_steps = self._initial_decode_cache_steps(
+            requested_max_steps=max_steps,
+            effective_max_steps=effective_max_steps,
         )
+        self._validate_decode_cache_capacity(prefill_state, max_decode_steps=initial_cache_steps)
         state = self._init_fixed_capacity_decode_state(
             prefill_state,
-            max_decode_steps=effective_max_steps + self.config.decode_chunk_size,
+            max_decode_steps=initial_cache_steps,
         )
         rng = np.random.default_rng(seed)
         chunk_size = self.config.decode_chunk_size
@@ -313,6 +318,11 @@ class VoxCPM2OnnxPipeline:
             # cache mutation, and the outer loop.
             remaining_steps = effective_max_steps - completed_steps
             accepted_steps = min(chunk_size, remaining_steps)
+            self._ensure_decode_cache_capacity(state, required_update_steps=chunk_size)
+            decode_inputs["base_k_cache"] = state["base_k_cache"]
+            decode_inputs["base_v_cache"] = state["base_v_cache"]
+            decode_inputs["residual_k_cache"] = state["residual_k_cache"]
+            decode_inputs["residual_v_cache"] = state["residual_v_cache"]
             self._fill_standard_normal(rng, diffusion_noise)
             run_outputs = decode_session.run(DECODE_OUTPUTS, decode_inputs)
             for name, value in zip(DECODE_OUTPUTS, run_outputs, strict=True):
@@ -398,6 +408,46 @@ class VoxCPM2OnnxPipeline:
             "residual_v_cache": make_cache(prefill_state["residual_v_cache"], residual_capacity),
             "residual_current_length": residual_current_length,
         }
+
+    def _initial_decode_cache_steps(self, *, requested_max_steps: int, effective_max_steps: int) -> int:
+        """Choose initial cache capacity without treating auto-stop as max output length.
+
+        `max_steps=0` means "run until stop logits", but the safety cap is only
+        a loop guard. Allocating KV cache for the whole safety cap makes every
+        decode_chunk call move thousands of unused positions for short text.
+        """
+
+        if requested_max_steps == 0:
+            return max(
+                self.config.decode_chunk_size,
+                min(effective_max_steps, self.config.decode_auto_initial_steps),
+            )
+        return max(self.config.decode_chunk_size, effective_max_steps)
+
+    def _ensure_decode_cache_capacity(self, state: dict[str, np.ndarray], *, required_update_steps: int) -> None:
+        """Grow fixed-capacity cache by blocks only when auto-stop runs long"""
+
+        base_required = int(state["base_current_length"][0]) + required_update_steps
+        residual_required = int(state["residual_current_length"][0]) + required_update_steps
+        required = max(base_required, residual_required)
+        current_capacity = int(state["base_k_cache"].shape[3])
+        if required <= current_capacity:
+            return
+        if required > self.config.max_decode_cache_seq:
+            raise ValueError(
+                f"decode cache length {required} exceeds production bound {self.config.max_decode_cache_seq}; "
+                "lower --max-steps or re-export with a larger --max-cache-seq-bound"
+            )
+        growth_target = max(required, current_capacity + self.config.decode_cache_growth_steps)
+        new_capacity = min(self.config.max_decode_cache_seq, growth_target)
+        for key in ("base_k_cache", "base_v_cache", "residual_k_cache", "residual_v_cache"):
+            state[key] = self._grow_cache_tensor(state[key], new_capacity)
+
+    @staticmethod
+    def _grow_cache_tensor(cache: np.ndarray, new_capacity: int) -> np.ndarray:
+        grown = np.zeros((*cache.shape[:3], new_capacity, cache.shape[4]), dtype=cache.dtype)
+        grown[:, :, :, : cache.shape[3], :] = cache
+        return grown
 
     @staticmethod
     def _fill_standard_normal(rng: np.random.Generator, target: np.ndarray) -> None:
@@ -686,6 +736,8 @@ class VoxCPM2OnnxPipeline:
                 audio_chunk_size=int(np.prod(audio_vae_config.get("encoder_rates", [2, 5, 8, 8]))),
                 decode_chunk_size=self.config.decode_chunk_size,
                 decode_safety_max_steps=self.config.decode_safety_max_steps,
+                decode_auto_initial_steps=self.config.decode_auto_initial_steps,
+                decode_cache_growth_steps=self.config.decode_cache_growth_steps,
                 max_audio_encoder_samples=self.config.max_audio_encoder_samples,
                 max_decoder_latent_steps=self.config.max_decoder_latent_steps,
                 max_prefill_seq_len=self.config.max_prefill_seq_len,

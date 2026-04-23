@@ -43,6 +43,7 @@ class _FakeSessions:
         self.decode_calls = 0
         self.chunk_size = 4
         self.stop_after = stop_after
+        self.cache_capacities: list[int] = []
         self.prefill = _FakeSession(self._prefill_run)
         self.decode_chunk = _FakeSession(self._decode_run)
         self.audio_decoder = _FakeSession(self._decoder_run)
@@ -63,6 +64,7 @@ class _FakeSessions:
 
     def _decode_run(self, output_names, inputs):
         self.decode_calls += 1
+        self.cache_capacities.append(int(inputs["base_k_cache"].shape[3]))
         start_step = int(inputs["base_current_length"][0])
         step_numbers = np.arange(start_step + 1, start_step + self.chunk_size + 1)
         should_stop = (
@@ -133,9 +135,20 @@ def test_auto_decode_loop_uses_safety_cap_without_stop() -> None:
     assert result.waveform.shape == (5,)
 
 
+def test_auto_decode_loop_does_not_allocate_full_safety_cache_for_short_output() -> None:
+    pipeline, sessions = _fake_pipeline(stop_after=3, safety_max_steps=1000)
+    result = pipeline.synthesize_with_metadata("hello", max_steps=0, min_steps=0)
+
+    assert result.metadata.decode_steps == 3
+    assert result.metadata.stop_reason == "stop_logits"
+    assert sessions.cache_capacities
+    assert max(sessions.cache_capacities) == pipeline.config.decode_auto_initial_steps
+
+
 def main() -> int:
     test_decode_loop_stops_before_large_upper_bound()
     test_auto_decode_loop_uses_safety_cap_without_stop()
+    test_auto_decode_loop_does_not_allocate_full_safety_cache_for_short_output()
     print("decode_stop_policy_smoke=ok")
     return 0
 

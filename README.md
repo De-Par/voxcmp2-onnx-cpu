@@ -15,15 +15,15 @@ This repository keeps VoxCPM2 neural work in separate ONNX graphs and keeps host
 
 ## 📚 Contents
 
-- [🚦 Status](#🚦-status)
-- [🧠 Architecture](#🧠-architecture)
-- [🗂️ Repository Layout](#🗂️-repository-layout)
-- [🚀 From Fresh Clone To Exported Models](#🚀-from-fresh-clone-to-exported-models)
-- [🔊 Synthesize WAV](#🔊-synthesize-wav)
-- [🧩 Integration API](#🧩-integration-api)
-- [📊 Benchmark And Profile](#📊-benchmark-and-profile)
-- [🧪 Development Checks](#🧪-development-checks)
-- [📖 Documentation](#📖-documentation)
+- [🚦 Status](#-status)
+- [🧠 Architecture](#-architecture)
+- [🗂️ Repository Layout](#-repository-layout)
+- [🚀 From Fresh Clone To Exported Models](#-from-fresh-clone-to-exported-models)
+- [🔊 Synthesize WAV](#-synthesize-wav)
+- [🧩 Integration API](#-integration-api)
+- [📊 Benchmark And Profile](#-benchmark-and-profile)
+- [🧪 Development Checks](#-development-checks)
+- [📖 Documentation](#-documentation)
 
 
 ## 🚦 Status
@@ -487,6 +487,20 @@ BF16 is the ONNX performance target because official VoxCPM2 also runs the model
 The default production ORT session policy is shared by FP32 and BF16:
 `graph_optimization=all`, `execution=sequential`, `intra_op_threads=8`, `inter_op_threads=1`,
 and ORT memory pattern / CPU arena / memory reuse enabled. Use the sweep command above before changing it.
+
+For large-graph startup latency, create ORT-format siblings after export:
+
+```bash
+python -B -m onnxruntime.tools.convert_onnx_models_to_ort \
+  models/onnx/bf16 \
+  --optimization_style Fixed \
+  --allow_conversion_failures \
+  --target_platform <arm|amd64>
+```
+
+The runtime automatically prefers `*.ort` files next to the exported `*.onnx`
+files when they exist. This is the intended path to reduce repeated ORT session
+creation cost without changing model math.
 
 
 ## 🧪 Development Checks

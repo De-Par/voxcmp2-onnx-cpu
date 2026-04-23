@@ -285,9 +285,13 @@ def _run_onnx_case(
     input_build_seconds = time.perf_counter() - input_start
 
     prefill_start = time.perf_counter()
+    initial_cache_steps = pipeline._initial_decode_cache_steps(
+        requested_max_steps=args.max_steps,
+        effective_max_steps=effective_max_steps,
+    )
     state = pipeline._init_fixed_capacity_decode_state(
         dict(zip(prefill_outputs, pipeline.sessions.prefill.run(prefill_outputs, sequence), strict=True)),
-        max_decode_steps=effective_max_steps + pipeline.config.decode_chunk_size,
+        max_decode_steps=initial_cache_steps,
     )
     prefill_seconds = time.perf_counter() - prefill_start
 
@@ -299,6 +303,7 @@ def _run_onnx_case(
     while completed_steps < effective_max_steps:
         remaining_steps = effective_max_steps - completed_steps
         candidate_steps = min(pipeline.config.decode_chunk_size, remaining_steps)
+        pipeline._ensure_decode_cache_capacity(state, required_update_steps=pipeline.config.decode_chunk_size)
         decode_inputs = {
             "lm_hidden": state["lm_hidden"],
             "residual_hidden": state["residual_hidden"],

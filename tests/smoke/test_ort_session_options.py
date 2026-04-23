@@ -47,6 +47,7 @@ def test_ort_session_options_are_configurable_without_creating_sessions() -> Non
         "enable_mem_reuse": True,
         "enable_profiling": False,
         "profile_file_prefix": None,
+        "prefer_ort_format": True,
     }
 
     options = factory._session_options()
