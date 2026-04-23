@@ -253,6 +253,10 @@ Large `.onnx.data` files must stay next to their `.onnx` files.
 Module-level exports example for FP32 version:
 
 ```bash
+############################
+# Example for fp32 version #
+############################
+
 # audio_vae_encoder
 python -B src/export/export_audio_vae_encoder.py --precision fp32
 # audio_vae_decoder
@@ -261,6 +265,19 @@ python -B src/export/export_audio_vae_decoder.py --precision fp32
 python -B src/export/export_prefill.py --precision fp32 --mode plain_tts
 # decode_chunk
 python -B src/export/export_decode_chunk.py --precision fp32 --chunk-size 4 --current-length 16 --max-cache-seq 64
+
+############################
+# Example for bf16 version #
+############################
+
+# audio_vae_encoder
+python -B src/export/export_audio_vae_encoder.py --precision bf16
+# audio_vae_decoder
+python -B src/export/export_audio_vae_decoder.py --precision bf16
+# prefill
+python -B src/export/export_prefill.py --precision bf16 --mode plain_tts
+# decode_chunk
+python -B src/export/export_decode_chunk.py --precision bf16 --chunk-size 4 --current-length 16 --max-cache-seq 64
 ```
 
 ### 5️⃣ Validate Exported Graphs
@@ -268,7 +285,10 @@ python -B src/export/export_decode_chunk.py --precision fp32 --chunk-size 4 --cu
 Path-based ONNX checker plus one ORT CPU run per module:
 
 ```bash
-# Example for FP32 version:
+############################
+# Example for fp32 version #
+############################
+
 # audio_vae_encoder
 python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 # audio_vae_decoder
@@ -277,21 +297,24 @@ python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/fp32/
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/fp32/prefill/voxcpm2_prefill.onnx --mode plain_tts
 # decode_chunk
 python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/fp32/decode_chunk/voxcpm2_decode_chunk.onnx --chunk-size 4 --cache-seq 16 --max-cache-seq 64
-```
 
-Use the same commands with `fp32` replaced by `bf16` to validate BF16 artifacts:
+############################
+# Example for bf16 version #
+############################
 
-```bash
+# audio_vae_encoder
 python -B src/runtime/run_audio_vae_encoder_ort.py --onnx-path models/onnx/bf16/audio_vae_encoder/audio_vae_encoder.onnx
+# audio_vae_decoder
 python -B src/runtime/run_audio_vae_decoder_ort.py --onnx-path models/onnx/bf16/audio_vae_decoder/audio_vae_decoder.onnx
+# prefill
 python -B src/runtime/run_prefill_ort.py --onnx-path models/onnx/bf16/prefill/voxcpm2_prefill.onnx --mode plain_tts
+# decode_chunk
 python -B src/runtime/run_decode_chunk_ort.py --onnx-path models/onnx/bf16/decode_chunk/voxcpm2_decode_chunk.onnx --chunk-size 4 --cache-seq 16 --max-cache-seq 64
 ```
 
 Parity against PyTorch export wrappers:
 
 ```bash
-# Example for FP32 version:
 # audio_vae_encoder
 python -B tests/parity/test_audio_vae_encoder.py --onnx-path models/onnx/fp32/audio_vae_encoder/audio_vae_encoder.onnx
 # audio_vae_decoder
@@ -305,8 +328,8 @@ python -B tests/parity/test_decode_chunk.py --onnx-path models/onnx/fp32/decode_
 CPU-only runtime smoke:
 
 ```bash
-python -B tests/smoke/test_cpu_only_runtime.py
 # Expected after models exist: cpu_only_runtime_smoke=ok
+python -B tests/smoke/test_cpu_only_runtime.py
 ```
 
 
