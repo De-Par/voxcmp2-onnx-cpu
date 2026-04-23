@@ -50,8 +50,8 @@ class _FakeSessions:
 
     def _prefill_run(self, output_names, _inputs):
         values = {
-            "lm_hidden": np.zeros((1, 1, 2), dtype=np.float32),
-            "residual_hidden": np.zeros((1, 1, 2), dtype=np.float32),
+            "lm_hidden": np.zeros((1, 2), dtype=np.float32),
+            "residual_hidden": np.zeros((1, 2), dtype=np.float32),
             "prefix_feat_cond": np.zeros((1, 1, 2), dtype=np.float32),
             "base_k_cache": np.zeros((1, 1, 1, 0, 1), dtype=np.float32),
             "base_v_cache": np.zeros((1, 1, 1, 0, 1), dtype=np.float32),
@@ -102,7 +102,12 @@ class _FakeSessions:
 def _fake_pipeline(stop_after: int | None, *, safety_max_steps: int = 16) -> tuple[object, _FakeSessions]:
     VoxCPM2OnnxPipeline, VoxCPM2RuntimeConfig = _runtime_classes()
     sessions = _FakeSessions(stop_after=stop_after)
-    config = VoxCPM2RuntimeConfig(feat_dim=2, patch_size=1, decode_safety_max_steps=safety_max_steps)
+    config = VoxCPM2RuntimeConfig(
+        feat_dim=2,
+        patch_size=1,
+        decode_safety_max_steps=safety_max_steps,
+        enable_decode_chunk_iobinding=False,
+    )
     pipeline = VoxCPM2OnnxPipeline(sessions=sessions, config=config)
     pipeline.build_prefill_inputs = lambda *args, **kwargs: {
         "text_tokens": np.array([[1]], dtype=np.int64),

@@ -135,7 +135,7 @@ python -B src/bench/compare_pipelines.py \
   --onnx-inter-op-threads 1
 ```
 
-The benchmark prints readable console output and writes JSON. It records input data load probe time, model load time, per-iteration WAV path, synth/wall time, sample rate, sample count, output duration, peak, RMS, decode steps, stop reason, and aggregate mean/p50/p90/p95/p99 metrics.
+The benchmark prints readable console output and writes JSON. It records input data load probe time, model load time, per-iteration WAV path, synth/wall time, sample rate, sample count, output duration, peak, RMS, decode steps, stop reason, and ONNX per-stage timings for prefill, decode chunk, and audio decoder. Aggregate JSON includes mean/p50/p90/p95/p99 for those stage timings as well.
 
 BF16 should be benchmarked as a production performance target, not as an experiment. At the same time, current stock ONNX Runtime CPU forces large documented FP32 islands for missing BF16 kernels, so a BF16 artifact can be correct and still fail to beat the official API. Use the per-stage latency columns and ORT profile hotspots to decide whether the bottleneck is session overhead, prefill, decode chunk, AudioVAE, or dtype compatibility casts.
 
@@ -169,19 +169,31 @@ production `graph_optimization=all` synthesis from the previously observed
 Startup remained high because ONNX Runtime still creates sessions from multi-GB
 ONNX graphs.
 
-For startup latency, convert exported `.onnx` graphs to ORT format offline:
+For startup latency, build preferred runtime artifacts offline:
 
 ```bash
-python -B -m onnxruntime.tools.convert_onnx_models_to_ort \
-  models/onnx/bf16 \
-  --optimization_style Fixed \
-  --allow_conversion_failures \
-  --target_platform <arm|amd64>
+python -B src/export/build_runtime_artifacts.py \
+  --precisions fp32 bf16 \
+  --modules prefill decode_chunk \
+  --report-json artifacts/reports/runtime_artifacts.json
 ```
 
-The runtime automatically prefers sibling `.ort` files when present and falls
-back to `.onnx` otherwise. Use the same command for `models/onnx/fp32` when
-benchmarking FP32 startup.
+The builder tries `.ort` first and falls back to validated
+`*.optimized.onnx` when the current ONNX Runtime build cannot serialize a valid
+heavy `.ort` artifact. On the local ORT 1.24.4 build this blocker currently
+applies to the large `prefill` and `decode_chunk` graphs. Runtime always
+prefers usable `.ort` siblings first. `*.optimized.onnx` remains an explicit
+startup-oriented path because the current BF16 heavy graphs reduce cold-start
+time but can still regress steady-state synth latency.
+
+Measured locally on BF16 heavy graphs:
+
+| path | load result |
+|---|---|
+| raw `prefill.onnx` | ~24.5 s |
+| `prefill.optimized.onnx` | ~17.1 s |
+| raw `decode_chunk.onnx` | ~181.1 s |
+| `decode_chunk.optimized.onnx` | ~105.3 s |
 
 ## IO Binding Probe
 

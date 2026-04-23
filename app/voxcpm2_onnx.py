@@ -50,6 +50,8 @@ class VoxCPM2OnnxConfig:
     enable_mem_pattern: bool | None = True
     enable_cpu_mem_arena: bool | None = True
     enable_mem_reuse: bool | None = True
+    prefer_optimized_onnx: bool = False
+    enable_decode_chunk_iobinding: bool = False
     max_audio_encoder_samples: int | None = None
     max_decoder_latent_steps: int | None = None
     max_prefill_seq_len: int | None = None
@@ -73,6 +75,8 @@ class VoxCPM2Onnx:
             enable_mem_pattern=self.config.enable_mem_pattern,
             enable_cpu_mem_arena=self.config.enable_cpu_mem_arena,
             enable_mem_reuse=self.config.enable_mem_reuse,
+            prefer_optimized_onnx=self.config.prefer_optimized_onnx,
+            enable_decode_chunk_iobinding=self.config.enable_decode_chunk_iobinding,
             max_audio_encoder_samples=self.config.max_audio_encoder_samples,
             max_decoder_latent_steps=self.config.max_decoder_latent_steps,
             max_prefill_seq_len=self.config.max_prefill_seq_len,

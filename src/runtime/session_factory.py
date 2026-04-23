@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 import onnxruntime as ort
 
@@ -33,6 +34,7 @@ LOG_SEVERITY_LEVELS = {
 GRAPH_OPTIMIZATION_CHOICES = tuple(GRAPH_OPTIMIZATION_LEVELS)
 EXECUTION_MODE_CHOICES = tuple(EXECUTION_MODES)
 LOG_SEVERITY_CHOICES = tuple(LOG_SEVERITY_LEVELS)
+ArtifactKind = Literal["ort", "optimized_onnx", "onnx"]
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ class OrtSessionFactory:
     enable_profiling: bool = False
     profile_file_prefix: Path | None = None
     prefer_ort_format: bool = True
+    prefer_optimized_onnx: bool = False
     _sessions: dict[str, ort.InferenceSession] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -86,16 +89,16 @@ class OrtSessionFactory:
         missing: list[str] = []
         resolved: dict[str, Path] = {}
         for name, path in self.paths.items():
-            path = self._preferred_path(path)
-            resolved[name] = path
-            if not path.is_file():
-                missing.append(f"{name}: {path}")
+            artifact_path, _ = self._preferred_artifact(path)
+            resolved[name] = artifact_path
+            if not artifact_path.is_file():
+                missing.append(f"{name}: {artifact_path}")
                 continue
-            data_path = self._external_data_path(path)
+            data_path = self._external_data_path(artifact_path)
             if data_path is not None and not data_path.is_file():
                 missing.append(f"{name}_external_data: {data_path}")
         if missing:
-            raise FileNotFoundError("Missing ONNX model files:\n" + "\n".join(missing))
+            raise FileNotFoundError("Missing model files:\n" + "\n".join(missing))
         return resolved
 
     @property
@@ -118,9 +121,11 @@ class OrtSessionFactory:
     def decode_chunk(self) -> ort.InferenceSession:
         return self._get("decode_chunk", self.paths.decode_chunk)
 
-    def _session_options(self, session_name: str | None = None) -> ort.SessionOptions:
+    def _session_options(
+        self, session_name: str | None = None, *, artifact_kind: ArtifactKind = "onnx"
+    ) -> ort.SessionOptions:
         options = ort.SessionOptions()
-        graph_optimization_level = self._resolved_graph_optimization_level()
+        graph_optimization_level = self._graph_optimization_level_for_artifact(artifact_kind)
         try:
             options.graph_optimization_level = GRAPH_OPTIMIZATION_LEVELS[graph_optimization_level]
         except KeyError as exc:
@@ -167,6 +172,7 @@ class OrtSessionFactory:
             "enable_profiling": self.enable_profiling,
             "profile_file_prefix": str(self.profile_file_prefix) if self.profile_file_prefix else None,
             "prefer_ort_format": self.prefer_ort_format,
+            "prefer_optimized_onnx": self.prefer_optimized_onnx,
         }
 
     def end_profiling(self) -> dict[str, Path]:
@@ -185,6 +191,15 @@ class OrtSessionFactory:
         if self.disable_graph_optimizations is False:
             return "all"
         return self.graph_optimization_level
+
+    def _graph_optimization_level_for_artifact(self, artifact_kind: ArtifactKind) -> str:
+        resolved = self._resolved_graph_optimization_level()
+        if artifact_kind in {"ort", "optimized_onnx"} and resolved != "disable":
+            # ORT and optimized ONNX artifacts already bake graph rewrites
+            # offline. Re-running them at load time only adds session creation
+            # cost and may duplicate work on every process start.
+            return "disable"
+        return resolved
 
     @staticmethod
     def _set_thread_option(options: ort.SessionOptions, name: str, value: int | None) -> None:
@@ -211,15 +226,7 @@ class OrtSessionFactory:
 
     def _get(self, name: str, path: Path) -> ort.InferenceSession:
         if name not in self._sessions:
-            path = self._preferred_path(path)
-            self._assert_path(name, path)
-            # Providers are passed explicitly to avoid implicit accelerator
-            # fallback on machines that happen to have GPU/CoreML packages.
-            session = ort.InferenceSession(
-                str(path),
-                sess_options=self._session_options(name),
-                providers=[CPU_PROVIDER],
-            )
+            session = self._load_session(name, path)
             self._assert_cpu_only(session, name)
             self._sessions[name] = session
         return self._sessions[name]
@@ -230,12 +237,65 @@ class OrtSessionFactory:
             return None
         return path.with_suffix(path.suffix + ".data")
 
-    def _preferred_path(self, path: Path) -> Path:
-        if self.prefer_ort_format and path.suffix == ".onnx":
-            ort_path = path.with_suffix(".ort")
-            if ort_path.is_file():
-                return ort_path
-        return path
+    def _optimized_onnx_path(self, path: Path) -> Path:
+        if path.suffix != ".onnx":
+            return path
+        return path.with_name(f"{path.stem}.optimized{path.suffix}")
+
+    def _artifact_candidates(self, path: Path) -> list[tuple[Path, ArtifactKind]]:
+        candidates: list[tuple[Path, ArtifactKind]] = []
+        if path.suffix == ".onnx":
+            if self.prefer_ort_format:
+                ort_path = path.with_suffix(".ort")
+                if self._is_usable_ort_file(ort_path):
+                    candidates.append((ort_path, "ort"))
+            if self.prefer_optimized_onnx:
+                optimized_path = self._optimized_onnx_path(path)
+                if self._is_usable_file(optimized_path):
+                    candidates.append((optimized_path, "optimized_onnx"))
+        candidates.append((path, "onnx"))
+        return candidates
+
+    def _preferred_artifact(self, path: Path) -> tuple[Path, ArtifactKind]:
+        return self._artifact_candidates(path)[0]
+
+    @staticmethod
+    def _is_usable_ort_file(path: Path) -> bool:
+        return path.is_file() and path.stat().st_size > 0
+
+    @staticmethod
+    def _is_usable_file(path: Path) -> bool:
+        return path.is_file() and path.stat().st_size > 0
+
+    def _load_session(self, name: str, original_path: Path) -> ort.InferenceSession:
+        candidates = self._artifact_candidates(original_path)
+        last_error: Exception | None = None
+        for index, (candidate_path, artifact_kind) in enumerate(candidates):
+            self._assert_path(name, candidate_path)
+            try:
+                return self._create_session(candidate_path, name, artifact_kind=artifact_kind)
+            except Exception as exc:  # noqa: BLE001 - ORT raises multiple load error types.
+                last_error = exc
+                if index == len(candidates) - 1:
+                    raise
+                next_path, _ = candidates[index + 1]
+                warnings.warn(
+                    f"{name}: failed to load preferred artifact {candidate_path.name}; "
+                    f"falling back to {next_path.name}: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        assert last_error is not None
+        raise last_error
+
+    def _create_session(self, path: Path, session_name: str, *, artifact_kind: ArtifactKind) -> ort.InferenceSession:
+        # Providers are passed explicitly to avoid implicit accelerator
+        # fallback on machines that happen to have GPU/CoreML packages.
+        return ort.InferenceSession(
+            str(path),
+            sess_options=self._session_options(session_name, artifact_kind=artifact_kind),
+            providers=[CPU_PROVIDER],
+        )
 
     def _assert_path(self, name: str, path: Path) -> None:
         if not path.is_file():

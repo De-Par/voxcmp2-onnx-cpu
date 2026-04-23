@@ -82,6 +82,9 @@ class BenchResult:
     rms: float | None
     decode_steps: int | None = None
     stop_reason: str | None = None
+    prefill_seconds: float | None = None
+    decode_seconds: float | None = None
+    decoder_seconds: float | None = None
     error: str | None = None
 
     def as_json(self) -> dict[str, object]:
@@ -100,6 +103,9 @@ class BenchResult:
             "rms": self.rms,
             "decode_steps": self.decode_steps,
             "stop_reason": self.stop_reason,
+            "prefill_seconds": self.prefill_seconds,
+            "decode_seconds": self.decode_seconds,
+            "decoder_seconds": self.decoder_seconds,
             "error": self.error,
         }
 
@@ -213,6 +219,8 @@ def _load_onnx(args: argparse.Namespace, variant: Variant) -> LoadedVariant:
         enable_mem_pattern=args.onnx_enable_mem_pattern,
         enable_cpu_mem_arena=args.onnx_enable_cpu_mem_arena,
         enable_mem_reuse=args.onnx_enable_mem_reuse,
+        prefer_optimized_onnx=args.onnx_prefer_optimized_artifacts,
+        enable_decode_chunk_iobinding=args.onnx_decode_chunk_iobinding,
         max_audio_encoder_samples=args.max_audio_encoder_samples,
         max_decoder_latent_steps=args.max_decoder_latent_steps,
         max_prefill_seq_len=args.max_prefill_seq_len,
@@ -267,6 +275,9 @@ def _run_onnx_loaded(
         rms=rms,
         decode_steps=metadata.decode_steps,
         stop_reason=metadata.stop_reason,
+        prefill_seconds=metadata.prefill_seconds,
+        decode_seconds=metadata.decode_seconds,
+        decoder_seconds=metadata.decoder_seconds,
     )
 
 
@@ -400,6 +411,9 @@ def _run_iteration(args: argparse.Namespace, loaded: LoadedVariant, iteration: i
             duration_seconds=None,
             peak=None,
             rms=None,
+            prefill_seconds=None,
+            decode_seconds=None,
+            decoder_seconds=None,
             error=error,
         )
 
@@ -478,6 +492,8 @@ def _print_header(args: argparse.Namespace) -> None:
         f"execution={args.onnx_execution_mode}, "
         f"log={args.onnx_log_severity}, "
         f"preload_sessions={'yes' if args.onnx_preload_sessions else 'no'}, "
+        f"prefer_optimized_artifacts={'yes' if args.onnx_prefer_optimized_artifacts else 'no'}, "
+        f"decode_iobinding={'yes' if args.onnx_decode_chunk_iobinding else 'no'}, "
         f"intra_op={args.onnx_intra_op_threads if args.onnx_intra_op_threads is not None else 'default'}, "
         f"inter_op={args.onnx_inter_op_threads if args.onnx_inter_op_threads is not None else 'default'}, "
         f"mem_pattern={args.onnx_enable_mem_pattern}, "
@@ -511,6 +527,14 @@ def _print_result(result: BenchResult) -> None:
     )
     if result.decode_steps is not None:
         print(f"  Decode   : {result.decode_steps} step(s), stop={result.stop_reason}", flush=True)
+    if result.prefill_seconds is not None:
+        print(
+            "  Stages   : "
+            f"prefill={result.prefill_seconds:.3f}s, "
+            f"decode={result.decode_seconds:.3f}s, "
+            f"decoder={result.decoder_seconds:.3f}s",
+            flush=True,
+        )
     if result.peak is not None and result.peak < SILENCE_PEAK_THRESHOLD:
         print("  Warning  : very low peak amplitude; WAV may be silent", flush=True)
     print(
@@ -601,10 +625,13 @@ def _make_report(
     duration_values = [float(result.duration_seconds) for result in ok_results if result.duration_seconds is not None]
     sample_values = [float(result.samples) for result in ok_results if result.samples is not None]
     decode_values = [float(result.decode_steps) for result in ok_results if result.decode_steps is not None]
+    prefill_values = [float(result.prefill_seconds) for result in ok_results if result.prefill_seconds is not None]
+    decode_stage_values = [float(result.decode_seconds) for result in ok_results if result.decode_seconds is not None]
+    decoder_values = [float(result.decoder_seconds) for result in ok_results if result.decoder_seconds is not None]
     peak_values = [float(result.peak) for result in ok_results if result.peak is not None]
     rms_values = [float(result.rms) for result in ok_results if result.rms is not None]
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "variant": variant,
         "mode": args.mode,
         "iterations": args.iterations,
@@ -619,6 +646,8 @@ def _make_report(
             "onnx_execution_mode": args.onnx_execution_mode,
             "onnx_log_severity": args.onnx_log_severity,
             "onnx_preload_sessions": args.onnx_preload_sessions,
+            "onnx_prefer_optimized_artifacts": args.onnx_prefer_optimized_artifacts,
+            "onnx_decode_chunk_iobinding": args.onnx_decode_chunk_iobinding,
             "onnx_intra_op_threads": args.onnx_intra_op_threads,
             "onnx_inter_op_threads": args.onnx_inter_op_threads,
             "onnx_enable_mem_pattern": args.onnx_enable_mem_pattern,
@@ -633,6 +662,9 @@ def _make_report(
             "output_duration_seconds": _stats(duration_values),
             "samples": _stats(sample_values),
             "decode_steps": _stats(decode_values),
+            "prefill_seconds": _stats(prefill_values),
+            "decode_stage_seconds": _stats(decode_stage_values),
+            "decoder_seconds": _stats(decoder_values),
             "peak": _stats(peak_values),
             "rms": _stats(rms_values),
         },
@@ -648,6 +680,9 @@ def _print_summary(report: dict[str, object]) -> None:
     wall = aggregate["wall_seconds"]
     duration = aggregate["output_duration_seconds"]
     decode = aggregate["decode_steps"]
+    prefill = aggregate["prefill_seconds"]
+    decode_stage = aggregate["decode_stage_seconds"]
+    decoder = aggregate["decoder_seconds"]
     print(f"variant       : {report['variant']}", flush=True)
     print(f"data load     : {report['data_load_seconds']:.6f}s", flush=True)
     print(f"model load    : {report['model_load_seconds']:.6f}s", flush=True)
@@ -664,6 +699,14 @@ def _print_summary(report: dict[str, object]) -> None:
     )
     print(f"audio duration: mean={duration['mean']} p50={duration['p50']} p90={duration['p90']}", flush=True)
     print(f"decode steps  : mean={decode['mean']} p50={decode['p50']} p90={decode['p90']}", flush=True)
+    if prefill["mean"] is not None:
+        print(
+            "stage seconds: "
+            f"prefill mean={prefill['mean']} p50={prefill['p50']} | "
+            f"decode mean={decode_stage['mean']} p50={decode_stage['p50']} | "
+            f"decoder mean={decoder['mean']} p50={decoder['p50']}",
+            flush=True,
+        )
     print(flush=True)
 
 
@@ -772,6 +815,24 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Create ONNX Runtime sessions during the load phase. Disable with --no-onnx-preload-sessions "
             "to measure first-request latency."
+        ),
+    )
+    parser.add_argument(
+        "--onnx-prefer-optimized-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Prefer `*.optimized.onnx` heavy-module artifacts when present. This reduces cold-start latency, "
+            "but current BF16 graphs may trade startup wins for slower synth."
+        ),
+    )
+    parser.add_argument(
+        "--onnx-decode-chunk-iobinding",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use ORT CPU IO binding with preallocated decode_chunk outputs. Keep this benchmark-driven; "
+            "current BF16 artifacts can regress while some FP32 cases improve."
         ),
     )
     parser.add_argument(

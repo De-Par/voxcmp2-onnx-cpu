@@ -151,6 +151,24 @@ def _parser() -> argparse.ArgumentParser:
         default=True,
         help="Enable ORT memory reuse inside CPU sessions.",
     )
+    parser.add_argument(
+        "--prefer-optimized-onnx-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Prefer `*.optimized.onnx` heavy-module artifacts when present. This improves cold-start latency on "
+            "large graphs, but may trade startup wins for slower synth on current BF16 exports."
+        ),
+    )
+    parser.add_argument(
+        "--decode-chunk-iobinding",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use ORT CPU IO binding with preallocated decode_chunk outputs. Keep this benchmark-driven; "
+            "current BF16 artifacts may regress while some FP32 cases improve."
+        ),
+    )
     parser.add_argument("--local-files-only", action="store_true", default=True, help="Require local model files.")
     parser.add_argument(
         "--allow-download", action="store_false", dest="local_files_only", help="Allow Hugging Face downloads."
@@ -179,6 +197,8 @@ def main() -> int:
         enable_mem_pattern=args.ort_enable_mem_pattern,
         enable_cpu_mem_arena=args.ort_enable_cpu_mem_arena,
         enable_mem_reuse=args.ort_enable_mem_reuse,
+        prefer_optimized_onnx=args.prefer_optimized_onnx_artifacts,
+        enable_decode_chunk_iobinding=args.decode_chunk_iobinding,
         max_audio_encoder_samples=args.max_audio_encoder_samples,
         max_decoder_latent_steps=args.max_decoder_latent_steps,
         max_prefill_seq_len=args.max_prefill_seq_len,

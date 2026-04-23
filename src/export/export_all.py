@@ -13,6 +13,7 @@ try:
         get_precision_profile,
         output_path_under_root,
     )
+    from .build_runtime_artifacts import build_runtime_artifacts
     from .export_audio_vae_decoder import export_audio_vae_decoder
     from .export_audio_vae_encoder import export_audio_vae_encoder
     from .export_decode_chunk import export_decode_chunk
@@ -24,6 +25,7 @@ except ImportError:
         get_precision_profile,
         output_path_under_root,
     )
+    from build_runtime_artifacts import build_runtime_artifacts  # type: ignore[no-redef]
     from export_audio_vae_decoder import export_audio_vae_decoder  # type: ignore[no-redef]
     from export_audio_vae_encoder import export_audio_vae_encoder  # type: ignore[no-redef]
     from export_decode_chunk import export_decode_chunk  # type: ignore[no-redef]
@@ -91,6 +93,28 @@ def export_all(args: argparse.Namespace) -> None:
             seed=args.seed,
         )
     )
+
+    if args.build_runtime_artifacts != "none":
+        heavy_modules = ["prefill", "decode_chunk"]
+        selected_modules = (
+            ["audio_vae_encoder", "audio_vae_decoder", *heavy_modules]
+            if args.build_runtime_artifacts == "all"
+            else heavy_modules
+        )
+        build_runtime_artifacts(
+            argparse.Namespace(
+                root=args.output_root,
+                precisions=[precision.name],
+                modules=selected_modules,
+                target="auto",
+                force_ort_attempt=False,
+                graph_optimization_level="all",
+                execution_mode="sequential",
+                log_severity_level="error",
+                target_platform="auto",
+                report_json=None,
+            )
+        )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -167,6 +191,15 @@ def _parser() -> argparse.ArgumentParser:
         action="store_false",
         dest="local_files_only",
         help="Allow snapshot_download to fetch missing files.",
+    )
+    parser.add_argument(
+        "--build-runtime-artifacts",
+        choices=["none", "heavy", "all"],
+        default="heavy",
+        help=(
+            "Build preferred runtime artifacts after export. `heavy` postprocesses prefill/decode_chunk, "
+            "`all` also processes AudioVAE modules, `none` leaves only raw ONNX exports."
+        ),
     )
     return parser
 

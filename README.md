@@ -201,6 +201,17 @@ Export production BF16:
 python -B src/export/export_all.py --precision bf16
 ```
 
+`export_all.py` builds startup-oriented runtime artifacts for `prefill` and
+`decode_chunk` by default. Run that post-step directly when you need to rebuild
+only the heavy runtime artifacts:
+
+```bash
+python -B src/export/build_runtime_artifacts.py \
+  --precisions fp32 bf16 \
+  --modules prefill decode_chunk \
+  --report-json artifacts/reports/runtime_artifacts.json
+```
+
 BF16 export applies an ORT CPU compatibility pass automatically. The pass keeps the same public graph contract and inserts explicit FP32 islands only for BF16 op types that stock ONNX Runtime CPU cannot load or run. If you already have stale BF16 artifacts from an older export, patch them in place instead of re-exporting:
 
 ```bash
@@ -488,19 +499,22 @@ The default production ORT session policy is shared by FP32 and BF16:
 `graph_optimization=all`, `execution=sequential`, `intra_op_threads=8`, `inter_op_threads=1`,
 and ORT memory pattern / CPU arena / memory reuse enabled. Use the sweep command above before changing it.
 
-For large-graph startup latency, create ORT-format siblings after export:
+For large-graph startup latency, build preferred runtime artifacts after export:
 
 ```bash
-python -B -m onnxruntime.tools.convert_onnx_models_to_ort \
-  models/onnx/bf16 \
-  --optimization_style Fixed \
-  --allow_conversion_failures \
-  --target_platform <arm|amd64>
+python -B src/export/build_runtime_artifacts.py \
+  --precisions bf16 \
+  --modules prefill decode_chunk \
+  --report-json artifacts/reports/runtime_artifacts_bf16.json
 ```
 
-The runtime automatically prefers `*.ort` files next to the exported `*.onnx`
-files when they exist. This is the intended path to reduce repeated ORT session
-creation cost without changing model math.
+On the current local ORT 1.24.4 build, the heaviest VoxCPM2 modules are too
+large to serialize as valid single-file `.ort` artifacts. The builder records
+that blocker and produces validated `*.optimized.onnx` siblings instead. The
+runtime always prefers usable `*.ort` files first, and it can optionally prefer
+`*.optimized.onnx` when you explicitly enable that startup-oriented path. Keep
+that opt-in benchmark-driven: current BF16 heavy graphs reduce cold-start time
+but can still regress steady-state synth latency.
 
 
 ## 🧪 Development Checks

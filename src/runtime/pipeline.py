@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import math
+import time
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
+import onnxruntime as ort
 from huggingface_hub import snapshot_download
 from scipy.io import wavfile
 from scipy.signal import resample_poly
@@ -61,6 +64,99 @@ DECODE_OUTPUTS = [
     "next_residual_current_length",
 ]
 
+DECODE_FLOAT_OUTPUTS = {
+    "pred_audio_feature",
+    "decoder_latent",
+    "stop_logits",
+    "next_lm_hidden",
+    "next_residual_hidden",
+    "next_prefix_feat_cond",
+    "base_k_update",
+    "base_v_update",
+    "residual_k_update",
+    "residual_v_update",
+}
+DECODE_INT64_OUTPUTS = {"next_base_current_length", "next_residual_current_length"}
+
+
+@dataclass
+class DecodeChunkRunner:
+    """Preallocate decode_chunk outputs and execute through ORT CPU IO binding.
+
+    The graph output shapes are stable for a given production export profile and
+    do not depend on the current cache capacity. Reusing those output buffers
+    removes one source of per-chunk allocation churn on the hottest runtime
+    boundary while keeping the surrounding host decode loop unchanged.
+    """
+
+    session: ort.InferenceSession
+    enabled: bool = True
+    _output_buffers: dict[str, np.ndarray] = field(default_factory=dict, init=False, repr=False)
+    _output_ortvalues: dict[str, ort.OrtValue] = field(default_factory=dict, init=False, repr=False)
+
+    def run(self, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+        if not self.enabled:
+            return self.session.run(DECODE_OUTPUTS, inputs)
+
+        try:
+            self._ensure_output_buffers(inputs)
+            binding = self.session.io_binding()
+            for name, value in inputs.items():
+                binding.bind_cpu_input(name, value)
+            for name in DECODE_OUTPUTS:
+                binding.bind_ortvalue_output(name, self._output_ortvalues[name])
+            self.session.run_with_iobinding(binding)
+            binding.synchronize_outputs()
+            return [self._output_buffers[name] for name in DECODE_OUTPUTS]
+        except Exception as exc:  # noqa: BLE001 - keep one runtime path with a safe fallback.
+            self.enabled = False
+            warnings.warn(
+                f"decode_chunk IO binding disabled after runtime failure; falling back to session.run: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return self.session.run(DECODE_OUTPUTS, inputs)
+
+    def _ensure_output_buffers(self, inputs: dict[str, np.ndarray]) -> None:
+        required_shapes = self._output_shapes(inputs)
+        if self._buffers_match(required_shapes):
+            return
+        self._output_buffers = {}
+        self._output_ortvalues = {}
+        for name in DECODE_OUTPUTS:
+            dtype = np.float32 if name in DECODE_FLOAT_OUTPUTS else np.int64
+            buffer = np.empty(required_shapes[name], dtype=dtype)
+            self._output_buffers[name] = buffer
+            self._output_ortvalues[name] = ort.OrtValue.ortvalue_from_numpy(buffer)
+
+    def _buffers_match(self, required_shapes: dict[str, tuple[int, ...]]) -> bool:
+        if not self._output_buffers:
+            return False
+        return all(self._output_buffers[name].shape == required_shapes[name] for name in DECODE_OUTPUTS)
+
+    @staticmethod
+    def _output_shapes(inputs: dict[str, np.ndarray]) -> dict[str, tuple[int, ...]]:
+        batch_size, hidden_size = inputs["lm_hidden"].shape
+        _, patch_size, feat_dim = inputs["prefix_feat_cond"].shape
+        base_layers, _, kv_heads, _, head_dim = inputs["base_k_cache"].shape
+        residual_layers = inputs["residual_k_cache"].shape[0]
+        chunk_size = int(inputs["diffusion_noise"].shape[0])
+        chunk_latent_steps = chunk_size * patch_size
+        return {
+            "pred_audio_feature": (batch_size, chunk_size, patch_size, feat_dim),
+            "decoder_latent": (batch_size, feat_dim, chunk_latent_steps),
+            "stop_logits": (batch_size, chunk_size, 2),
+            "next_lm_hidden": (batch_size, hidden_size),
+            "next_residual_hidden": (batch_size, hidden_size),
+            "next_prefix_feat_cond": (batch_size, patch_size, feat_dim),
+            "base_k_update": (base_layers, batch_size, kv_heads, chunk_size, head_dim),
+            "base_v_update": (base_layers, batch_size, kv_heads, chunk_size, head_dim),
+            "next_base_current_length": (1,),
+            "residual_k_update": (residual_layers, batch_size, kv_heads, chunk_size, head_dim),
+            "residual_v_update": (residual_layers, batch_size, kv_heads, chunk_size, head_dim),
+            "next_residual_current_length": (1,),
+        }
+
 
 class CharTokenizerWrapper:
     """Minimal tokenizer adapter that avoids importing Transformers in runtime.
@@ -111,6 +207,7 @@ class VoxCPM2RuntimeConfig:
     decode_safety_max_steps: int = 4096
     decode_auto_initial_steps: int = 16
     decode_cache_growth_steps: int = 64
+    enable_decode_chunk_iobinding: bool = False
     max_audio_encoder_samples: int = 960_000
     max_decoder_latent_steps: int = 16_384
     max_prefill_seq_len: int = 1_024
@@ -124,6 +221,9 @@ class SynthesisMetadata:
     requested_max_steps: int
     effective_max_steps: int
     min_steps: int
+    prefill_seconds: float
+    decode_seconds: float
+    decoder_seconds: float
 
 
 @dataclass(frozen=True)
@@ -138,6 +238,7 @@ class VoxCPM2OnnxPipeline:
     config: VoxCPM2RuntimeConfig = field(default_factory=VoxCPM2RuntimeConfig)
     _model_dir: Path | None = field(default=None, init=False, repr=False)
     _tokenizer: CharTokenizerWrapper | None = field(default=None, init=False, repr=False)
+    _decode_chunk_runner: DecodeChunkRunner | None = field(default=None, init=False, repr=False)
 
     @classmethod
     def from_default_artifacts(
@@ -157,6 +258,8 @@ class VoxCPM2OnnxPipeline:
         enable_profiling: bool = False,
         profile_file_prefix: Path | None = None,
         prefer_ort_format: bool = True,
+        prefer_optimized_onnx: bool = False,
+        enable_decode_chunk_iobinding: bool = False,
         max_audio_encoder_samples: int | None = None,
         max_decoder_latent_steps: int | None = None,
         max_prefill_seq_len: int | None = None,
@@ -166,6 +269,7 @@ class VoxCPM2OnnxPipeline:
         config = VoxCPM2RuntimeConfig(
             model_path=model_path,
             local_files_only=local_files_only,
+            enable_decode_chunk_iobinding=enable_decode_chunk_iobinding,
             max_audio_encoder_samples=max_audio_encoder_samples or default_config.max_audio_encoder_samples,
             max_decoder_latent_steps=max_decoder_latent_steps or default_config.max_decoder_latent_steps,
             max_prefill_seq_len=max_prefill_seq_len or default_config.max_prefill_seq_len,
@@ -184,6 +288,7 @@ class VoxCPM2OnnxPipeline:
             enable_profiling=enable_profiling,
             profile_file_prefix=profile_file_prefix,
             prefer_ort_format=prefer_ort_format,
+            prefer_optimized_onnx=prefer_optimized_onnx,
         )
         return cls(sessions=sessions, config=config)
 
@@ -267,6 +372,7 @@ class VoxCPM2OnnxPipeline:
         # Host code owns mode-specific sequence assembly. The prefill ONNX
         # graph receives only tensors, so text/reference/prompt policy remains
         # inspectable and testable outside the neural graph.
+        prefill_start = time.perf_counter()
         sequence = self.build_prefill_inputs(
             text,
             mode=mode,
@@ -277,6 +383,7 @@ class VoxCPM2OnnxPipeline:
         )
 
         prefill_outputs = self.sessions.prefill.run(PREFILL_OUTPUTS, sequence)
+        prefill_seconds = time.perf_counter() - prefill_start
         prefill_state = dict(zip(PREFILL_OUTPUTS, prefill_outputs, strict=True))
         initial_cache_steps = self._initial_decode_cache_steps(
             requested_max_steps=max_steps,
@@ -309,9 +416,17 @@ class VoxCPM2OnnxPipeline:
         }
         decode_outputs: dict[str, np.ndarray] = {}
         decode_session = self.sessions.decode_chunk
+        decode_runner = self._decode_chunk_runner
+        if self.config.enable_decode_chunk_iobinding:
+            if decode_runner is None or decode_runner.session is not decode_session:
+                decode_runner = DecodeChunkRunner(decode_session)
+                self._decode_chunk_runner = decode_runner
+        else:
+            decode_runner = None
         stop_reason: StopReason | None = None
         completed_steps = 0
 
+        decode_start = time.perf_counter()
         while completed_steps < effective_max_steps:
             # One production ONNX call executes a small fixed chunk of exact
             # autoregressive decode steps. Host code still owns stop policy,
@@ -324,7 +439,11 @@ class VoxCPM2OnnxPipeline:
             decode_inputs["residual_k_cache"] = state["residual_k_cache"]
             decode_inputs["residual_v_cache"] = state["residual_v_cache"]
             self._fill_standard_normal(rng, diffusion_noise)
-            run_outputs = decode_session.run(DECODE_OUTPUTS, decode_inputs)
+            run_outputs = (
+                decode_runner.run(decode_inputs)
+                if decode_runner is not None
+                else decode_session.run(DECODE_OUTPUTS, decode_inputs)
+            )
             for name, value in zip(DECODE_OUTPUTS, run_outputs, strict=True):
                 decode_outputs[name] = value
             accepted_steps = self._accept_decode_chunk_outputs(
@@ -349,12 +468,10 @@ class VoxCPM2OnnxPipeline:
             if stop_reason is not None:
                 break
             self._apply_decode_chunk_cache_updates(state, decode_outputs, update_steps=accepted_steps)
-            state["lm_hidden"] = decode_outputs["next_lm_hidden"]
-            state["residual_hidden"] = decode_outputs["next_residual_hidden"]
-            state["prefix_feat_cond"] = decode_outputs["next_prefix_feat_cond"]
-            decode_inputs["lm_hidden"] = state["lm_hidden"]
-            decode_inputs["residual_hidden"] = state["residual_hidden"]
-            decode_inputs["prefix_feat_cond"] = state["prefix_feat_cond"]
+            state["lm_hidden"][...] = decode_outputs["next_lm_hidden"]
+            state["residual_hidden"][...] = decode_outputs["next_residual_hidden"]
+            state["prefix_feat_cond"][...] = decode_outputs["next_prefix_feat_cond"]
+        decode_seconds = time.perf_counter() - decode_start
 
         feature_seq = feature_buffer[:, :completed_steps, :, :]
         # AudioVAEDecoder expects [B, latent_dim, latent_steps]. The decode
@@ -367,7 +484,9 @@ class VoxCPM2OnnxPipeline:
                 f"{self.config.max_decoder_latent_steps}; re-export with a larger --max-latent-steps"
             )
         sr_cond = np.array([self.config.decode_sample_rate], dtype=np.int32)
+        decoder_start = time.perf_counter()
         waveform = self.sessions.audio_decoder.run(["waveform"], {"latent": decoder_latent, "sr_cond": sr_cond})[0]
+        decoder_seconds = time.perf_counter() - decoder_start
         return SynthesisResult(
             waveform=waveform[0, 0].astype(np.float32, copy=False),
             metadata=SynthesisMetadata(
@@ -376,6 +495,9 @@ class VoxCPM2OnnxPipeline:
                 requested_max_steps=max_steps,
                 effective_max_steps=effective_max_steps,
                 min_steps=min_steps,
+                prefill_seconds=round(prefill_seconds, 6),
+                decode_seconds=round(decode_seconds, 6),
+                decoder_seconds=round(decoder_seconds, 6),
             ),
         )
 
@@ -398,9 +520,9 @@ class VoxCPM2OnnxPipeline:
             return fixed
 
         return {
-            "lm_hidden": prefill_state["lm_hidden"],
-            "residual_hidden": prefill_state["residual_hidden"],
-            "prefix_feat_cond": prefill_state["prefix_feat_cond"],
+            "lm_hidden": prefill_state["lm_hidden"].copy(),
+            "residual_hidden": prefill_state["residual_hidden"].copy(),
+            "prefix_feat_cond": prefill_state["prefix_feat_cond"].copy(),
             "base_k_cache": make_cache(prefill_state["base_k_cache"], base_capacity),
             "base_v_cache": make_cache(prefill_state["base_v_cache"], base_capacity),
             "base_current_length": base_current_length,
@@ -738,6 +860,7 @@ class VoxCPM2OnnxPipeline:
                 decode_safety_max_steps=self.config.decode_safety_max_steps,
                 decode_auto_initial_steps=self.config.decode_auto_initial_steps,
                 decode_cache_growth_steps=self.config.decode_cache_growth_steps,
+                enable_decode_chunk_iobinding=self.config.enable_decode_chunk_iobinding,
                 max_audio_encoder_samples=self.config.max_audio_encoder_samples,
                 max_decoder_latent_steps=self.config.max_decoder_latent_steps,
                 max_prefill_seq_len=self.config.max_prefill_seq_len,

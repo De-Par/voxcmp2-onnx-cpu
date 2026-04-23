@@ -249,8 +249,10 @@ as the requested upper bound.
 - Do not fall back to CUDA, CoreML, DirectML, MPS, or any accelerator provider.
 - Load sessions lazily.
 - Keep ONNX external-data files next to their `.onnx` files.
-- Prefer sibling `.ort` files when they exist; ORT-format artifacts are the
-  startup-latency path for very large graphs.
+- Prefer sibling `.ort` files when they exist and validate cleanly.
+- For very large graphs, allow sibling `*.optimized.onnx` artifacts as an
+  explicit startup-latency fallback when the current ORT build cannot serialize
+  a valid heavy `.ort` file.
 - Fail fast with actionable errors for missing modules or external data.
 - Do not change model math in runtime code.
 - Do not insert silent runtime precision conversions.
